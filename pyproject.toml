@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "witrium"
+version = "0.1.0"
+description = "Python client for Witrium cloud browser automation API"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Witrium", email = "support@witrium.com" }
+]
+keywords = ["automation", "browser", "web", "api", "client", "witrium"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "Typing :: Typed",
+]
+dependencies = [
+  "httpx>=0.28,<1.0",
+  "pydantic>=2.11,<3",
+  "tenacity>=9.1,<10",
+]
+
+[project.urls]
+Homepage = "https://witrium.com"
+Repository = "https://github.com/witrium/witrium-py"
+Issues = "https://github.com/witrium/witrium-py/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["witrium*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+witrium = ["py.typed"]
+
+
