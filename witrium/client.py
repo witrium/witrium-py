@@ -16,8 +16,20 @@ class WitriumClientException(Exception):
     pass
 
 
+class FileUpload(BaseModel):
+    """
+    File upload schema.
+    Args:
+        filename: The name of the file.
+        data: The base64 encoded file content.
+    """
+    filename: str
+    data: str  # base64 encoded file content
+
+
 class WorkflowRunExecuteSchema(BaseModel):
     args: Optional[dict[str, str | int | float]] = None
+    files: Optional[List[FileUpload]] = None
     use_states: Optional[List[str]] = None
     preserve_state: Optional[str] = None
     no_intelligence: bool = False
@@ -45,6 +57,8 @@ class WorkflowRunExecutionSchema(BaseModel):
     instruction_id: str
     instruction: str
     result: Optional[dict | list] = None
+    result_format: Optional[str] = None
+    message: Optional[str] = None
     status: str
     error_message: Optional[str] = None
 
@@ -56,7 +70,7 @@ class WorkflowRunResultsSchema(BaseModel):
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     message: Optional[str] = None
-    executions: List[AgentExecutionSchema] = None
+    executions: Optional[List[AgentExecutionSchema]] = None
     result: Optional[dict | list] = None
     result_format: Optional[str] = None
     error_message: Optional[str] = None
@@ -70,7 +84,7 @@ class WorkflowSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     uuid: str
-    session_id: str
+    session_id: Optional[str] = None  # browser_session id
     workflow: WorkflowSchema
     run_type: str
     triggered_by: str
@@ -79,7 +93,7 @@ class WorkflowRunSchema(BaseModel):
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     error_message: Optional[str] = None
-    executions: List[WorkflowRunExecutionSchema] = None
+    executions: Optional[List[WorkflowRunExecutionSchema]] = None
 
 
 class WorkflowRunStatus:
@@ -178,6 +192,7 @@ class SyncWitriumClient(WitriumClient):
         self,
         workflow_id: str,
         args: Optional[Dict[str, Union[str, int, float]]] = None,
+        files: Optional[List[FileUpload]] = None,
         use_states: Optional[List[str]] = None,
         preserve_state: Optional[str] = None,
         no_intelligence: bool = False,
@@ -191,6 +206,7 @@ class SyncWitriumClient(WitriumClient):
         Args:
             workflow_id: The ID of the workflow to run.
             args: Optional arguments to pass to the workflow.
+            files: Optional list of files to upload with the workflow.
             use_states: Optional list of state names to use.
             preserve_state: Optional state name to preserve.
             no_intelligence: Whether to run without AI intelligence.
@@ -204,6 +220,7 @@ class SyncWitriumClient(WitriumClient):
         url = f"{self.base_url}/v1/workflows/{workflow_id}/run"
         payload = {
             "args": args,
+            "files": [file.model_dump() for file in files] if files else None,
             "use_states": use_states,
             "preserve_state": preserve_state,
             "no_intelligence": no_intelligence,
@@ -252,6 +269,7 @@ class SyncWitriumClient(WitriumClient):
         self,
         workflow_id: str,
         args: Optional[Dict[str, Union[str, int, float]]] = None,
+        files: Optional[List[FileUpload]] = None,
         use_states: Optional[List[str]] = None,
         preserve_state: Optional[str] = None,
         no_intelligence: bool = False,
@@ -266,6 +284,7 @@ class SyncWitriumClient(WitriumClient):
         Args:
             workflow_id: The ID of the workflow to run.
             args: Optional arguments to pass to the workflow.
+            files: Optional list of files to upload with the workflow.
             use_states: Optional list of session IDs to use.
             preserve_state: Optional session ID to preserve.
             no_intelligence: Whether to run without AI intelligence.
@@ -283,6 +302,7 @@ class SyncWitriumClient(WitriumClient):
         run_response = self.run_workflow(
             workflow_id=workflow_id,
             args=args,
+            files=files,
             use_states=use_states,
             preserve_state=preserve_state,
             no_intelligence=no_intelligence,
@@ -482,6 +502,7 @@ class AsyncWitriumClient(WitriumClient):
         self,
         workflow_id: str,
         args: Optional[Dict[str, Union[str, int, float]]] = None,
+        files: Optional[List[FileUpload]] = None,
         use_states: Optional[List[str]] = None,
         preserve_state: Optional[str] = None,
         no_intelligence: bool = False,
@@ -495,6 +516,7 @@ class AsyncWitriumClient(WitriumClient):
         Args:
             workflow_id: The ID of the workflow to run.
             args: Optional arguments to pass to the workflow.
+            files: Optional list of files to upload with the workflow.
             use_states: Optional list of state names to use.
             preserve_state: Optional state name to preserve.
             no_intelligence: Whether to run without AI intelligence.
@@ -508,6 +530,7 @@ class AsyncWitriumClient(WitriumClient):
         url = f"{self.base_url}/v1/workflows/{workflow_id}/run"
         payload = {
             "args": args,
+            "files": [file.model_dump() for file in files] if files else None,
             "use_states": use_states,
             "preserve_state": preserve_state,
             "no_intelligence": no_intelligence,
@@ -556,6 +579,7 @@ class AsyncWitriumClient(WitriumClient):
         self,
         workflow_id: str,
         args: Optional[Dict[str, Union[str, int, float]]] = None,
+        files: Optional[List[FileUpload]] = None,
         use_states: Optional[List[str]] = None,
         preserve_state: Optional[str] = None,
         no_intelligence: bool = False,
@@ -570,6 +594,7 @@ class AsyncWitriumClient(WitriumClient):
         Args:
             workflow_id: The ID of the workflow to run.
             args: Optional arguments to pass to the workflow.
+            files: Optional list of files to upload with the workflow.
             use_states: Optional list of session IDs to use.
             preserve_state: Optional session ID to preserve.
             no_intelligence: Whether to run without AI intelligence.
@@ -587,6 +612,7 @@ class AsyncWitriumClient(WitriumClient):
         run_response = await self.run_workflow(
             workflow_id=workflow_id,
             args=args,
+            files=files,
             use_states=use_states,
             preserve_state=preserve_state,
             no_intelligence=no_intelligence,
