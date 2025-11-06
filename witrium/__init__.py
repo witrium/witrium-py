@@ -1,22 +1,37 @@
 from witrium.client import (
-    WitriumClient,
     SyncWitriumClient,
     AsyncWitriumClient,
-    WorkflowRunStatus,
     WitriumClientException,
-    AgentExecutionStatus,
-    FileUpload,
 )
 
-__version__ = "0.2.0"
+from witrium.types import (
+    FileUpload,
+    AgentExecutionSchema,
+    AgentExecutionStatus,
+    WorkflowRunSubmittedSchema,
+    WorkflowRunResultsSchema,
+    WorkflowRunSchema,
+    WorkflowRunStatus,
+    WorkflowRunExecuteSchema,
+    WorkflowRunExecutionSchema,
+    WorkflowSchema,
+)
+
+__version__ = "0.3.0"
 
 __all__ = [
-    "WitriumClient",
     "SyncWitriumClient",
     "AsyncWitriumClient",
-    "WorkflowRunStatus",
     "WitriumClientException",
-    "AgentExecutionStatus",
     "FileUpload",
+    "AgentExecutionSchema",
+    "AgentExecutionStatus",
+    "WorkflowRunSubmittedSchema",
+    "WorkflowRunResultsSchema",
+    "WorkflowRunSchema",
+    "WorkflowRunStatus",
+    "WorkflowRunExecuteSchema",
+    "WorkflowRunExecutionSchema",
+    "WorkflowSchema",
     "__version__",
 ]
