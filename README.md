@@ -16,7 +16,7 @@ Each workflow is identified by a unique `workflow_id` and can accept arguments t
 ## Installation
 
 ```bash
-pip install httpx tenacity pydantic
+pip install witrium
 ```
 
 ## Quick Start
