@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Any, Optional, List
 from pydantic import BaseModel
 
 
@@ -131,3 +131,10 @@ class AgentExecutionStatus:
     def get_status_name(cls, status_code: str) -> str:
         """Get human-readable status name from status code."""
         return cls.STATUS_NAMES.get(status_code, status_code)
+
+
+class TalentExecuteSchema(BaseModel):
+    args: Optional[dict[str, Any]] = None
+    files: Optional[List[FileUpload]] = None
+    use_states: Optional[List[str]] = None
+    preserve_state: Optional[str] = None

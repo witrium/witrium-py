@@ -5,6 +5,7 @@ import httpx
 from typing import Dict, List, Optional, Any, Union, Callable
 from tenacity import retry, stop_after_delay, wait_fixed, retry_if_result
 from witrium.types import (
+    TalentExecuteSchema,
     WorkflowRunSubmittedSchema,
     WorkflowRunResultsSchema,
     WorkflowRunSchema,
@@ -362,6 +363,31 @@ class SyncWitriumClient(WitriumClient):
         except Exception:
             return response.text or "Unknown error"
 
+    def run_talent(self, talent_id: str, execute_schema: TalentExecuteSchema) -> Any:
+        """
+        Run a talent by ID.
+
+        Args:
+            talent_id: The ID of the talent to run.
+            execute_schema: The schema to execute the talent.
+
+        Returns:
+            The result of the talent run.
+        """
+        url = f"{self.base_url}/v1/talents/{talent_id}/run"
+        payload = execute_schema.model_dump()
+        try:
+            response = self._client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            error_detail = self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error running talent: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error running talent: {str(e)}")
+
 
 class AsyncWitriumClient(WitriumClient):
     """Asynchronous Witrium API client."""
@@ -680,3 +706,30 @@ class AsyncWitriumClient(WitriumClient):
             return str(error_json)
         except Exception:
             return response.text or "Unknown error"
+
+    async def run_talent(
+        self, talent_id: str, execute_schema: TalentExecuteSchema
+    ) -> Any:
+        """
+        Run a talent by ID.
+
+        Args:
+            talent_id: The ID of the talent to run.
+            execute_schema: The schema to execute the talent.
+
+        Returns:
+            The result of the talent run.
+        """
+        url = f"{self.base_url}/v1/talents/{talent_id}/run"
+        payload = execute_schema.model_dump()
+        try:
+            response = await self._client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            error_detail = await self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error running talent: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error running talent: {str(e)}")
