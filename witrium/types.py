@@ -138,3 +138,13 @@ class TalentExecuteSchema(BaseModel):
     files: Optional[List[FileUpload]] = None
     use_states: Optional[List[str]] = None
     preserve_state: Optional[str] = None
+
+
+class TalentResultSchema(BaseModel):
+    status: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    message: Optional[str] = None
+    result: Optional[Any] = None
+    result_format: Optional[str] = None
+    error_message: Optional[str] = None

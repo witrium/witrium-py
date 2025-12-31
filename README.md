@@ -401,7 +401,12 @@ with SyncWitriumClient(api_token="your-api-token") as client:
             # preserve_state="new-state-name"
         )
     )
-    print("Talent result:", result)
+
+    # The result is a TalentResultSchema object
+    print(f"Status: {result.status}")
+    print(f"Result data: {result.result}")
+    if result.error_message:
+        print(f"Error: {result.error_message}")
 ```
 
 ## Basic Usage
@@ -619,7 +624,7 @@ Run a talent by ID.
 run_talent(
     talent_id: str,                      # Required: ID of the talent to run
     execute_schema: TalentExecuteSchema  # Required: Schema containing args, files, etc.
-) -> Any
+) -> TalentResultSchema
 ```
 
 ##### wait_until_state()

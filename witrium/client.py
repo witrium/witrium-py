@@ -12,6 +12,7 @@ from witrium.types import (
     FileUpload,
     WorkflowRunStatus,
     AgentExecutionStatus,
+    TalentResultSchema,
 )
 
 # Setup logger
@@ -363,7 +364,9 @@ class SyncWitriumClient(WitriumClient):
         except Exception:
             return response.text or "Unknown error"
 
-    def run_talent(self, talent_id: str, execute_schema: TalentExecuteSchema) -> Any:
+    def run_talent(
+        self, talent_id: str, execute_schema: TalentExecuteSchema
+    ) -> TalentResultSchema:
         """
         Run a talent by ID.
 
@@ -379,7 +382,7 @@ class SyncWitriumClient(WitriumClient):
         try:
             response = self._client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            return TalentResultSchema.model_validate(response.json())
         except httpx.HTTPStatusError as e:
             error_detail = self._extract_error_detail(e.response)
             raise WitriumClientException(
@@ -709,7 +712,7 @@ class AsyncWitriumClient(WitriumClient):
 
     async def run_talent(
         self, talent_id: str, execute_schema: TalentExecuteSchema
-    ) -> Any:
+    ) -> TalentResultSchema:
         """
         Run a talent by ID.
 
@@ -725,7 +728,7 @@ class AsyncWitriumClient(WitriumClient):
         try:
             response = await self._client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            return TalentResultSchema.model_validate(response.json())
         except httpx.HTTPStatusError as e:
             error_detail = await self._extract_error_detail(e.response)
             raise WitriumClientException(

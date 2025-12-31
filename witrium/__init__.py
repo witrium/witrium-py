@@ -16,9 +16,10 @@ from witrium.types import (
     WorkflowRunExecutionSchema,
     WorkflowSchema,
     TalentExecuteSchema,
+    TalentResultSchema,
 )
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 __all__ = [
     "SyncWitriumClient",
@@ -35,5 +36,6 @@ __all__ = [
     "WorkflowRunExecutionSchema",
     "WorkflowSchema",
     "TalentExecuteSchema",
+    "TalentResultSchema",
     "__version__",
 ]
