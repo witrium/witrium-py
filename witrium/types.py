@@ -14,6 +14,17 @@ class FileUpload(BaseModel):
     data: str  # base64 encoded file content
 
 
+class WorkflowRunOptionsSchema(BaseModel):
+    args: Optional[dict[str, str | int | float]] = None
+    files: Optional[List[FileUpload]] = None
+    use_states: Optional[List[str]] = None
+    preserve_state: Optional[str] = None
+    no_intelligence: bool = False
+    record_session: bool = False
+    keep_session_alive: bool = False
+    use_existing_session: Optional[str] = None
+
+
 class WorkflowRunSubmittedSchema(BaseModel):
     workflow_id: str
     run_id: str
@@ -39,7 +50,7 @@ class WorkflowRunExecutionSchema(BaseModel):
     error_message: Optional[str] = None
 
 
-class WorkflowRunResultsSchema(BaseModel):
+class WorkflowRunResultSchema(BaseModel):
     workflow_id: str
     run_id: str
     status: str
@@ -122,6 +133,15 @@ class AgentExecutionStatus:
         return cls.STATUS_NAMES.get(status_code, status_code)
 
 
+class TalentRunOptionsSchema(BaseModel):
+    args: Optional[dict[str, Any]] = None
+    files: Optional[List[FileUpload]] = None
+    use_states: Optional[List[str]] = None
+    preserve_state: Optional[str] = None
+    keep_session_alive: bool = False
+    use_existing_session: Optional[str] = None
+
+
 class TalentResultSchema(BaseModel):
     status: str
     started_at: Optional[str] = None
@@ -130,3 +150,19 @@ class TalentResultSchema(BaseModel):
     result: Optional[Any] = None
     result_format: Optional[str] = None
     error_message: Optional[str] = None
+
+
+class WaitUntilStateOptionsSchema(BaseModel):
+    all_instructions_executed: bool = False
+    min_wait_time: int = 0
+    polling_interval: int = 2
+    timeout: int = 60
+
+
+class RunWorkflowAndWaitOptionsSchema(WorkflowRunOptionsSchema):
+    polling_interval: int = 5
+    timeout: int = 300
+    return_intermediate_results: bool = False
+    on_progress: Optional[Any] = (
+        None  # Callable, but we'll handle type in the docstring
+    )

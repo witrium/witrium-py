@@ -2,16 +2,19 @@ import time
 import asyncio
 import logging
 import httpx
-from typing import Dict, List, Optional, Any, Union, Callable
+from typing import List, Optional, Union
 from tenacity import retry, stop_after_delay, wait_fixed, retry_if_result
 from witrium.types import (
     WorkflowRunSubmittedSchema,
-    WorkflowRunResultsSchema,
+    WorkflowRunResultSchema,
     WorkflowRunSchema,
-    FileUpload,
     WorkflowRunStatus,
     AgentExecutionStatus,
     TalentResultSchema,
+    WorkflowRunOptionsSchema,
+    TalentRunOptionsSchema,
+    WaitUntilStateOptionsSchema,
+    RunWorkflowAndWaitOptionsSchema,
 )
 
 # Setup logger
@@ -69,43 +72,41 @@ class SyncWitriumClient(WitriumClient):
     def run_workflow(
         self,
         workflow_id: str,
-        args: Optional[Dict[str, Union[str, int, float]]] = None,
-        files: Optional[List[FileUpload]] = None,
-        use_states: Optional[List[str]] = None,
-        preserve_state: Optional[str] = None,
-        no_intelligence: bool = False,
-        record_session: Optional[bool] = False,
-        keep_session_alive: bool = False,
-        use_existing_session: Optional[str] = None,
+        options: Optional[WorkflowRunOptionsSchema] = None,
     ) -> WorkflowRunSubmittedSchema:
         """
         Run a workflow by ID.
 
         Args:
             workflow_id: The ID of the workflow to run.
-            args: Optional arguments to pass to the workflow.
-            files: Optional list of files to upload with the workflow.
-            use_states: Optional list of state names to use.
-            preserve_state: Optional state name to preserve.
-            no_intelligence: Whether to run without AI intelligence.
-            record_session: Whether to record the session.
-            keep_session_alive: Whether to keep the session alive.
-            use_existing_session: The ID of the existing session to use.
+            options: Optional workflow run options.
 
         Returns:
             Dict containing workflow_id, run_id and status.
         """
+        if options is None:
+            options = WorkflowRunOptionsSchema()
+
         url = f"{self.base_url}/v1/workflows/{workflow_id}/run"
-        payload = {
-            "args": args,
-            "files": [file.model_dump() for file in files] if files else None,
-            "use_states": use_states,
-            "preserve_state": preserve_state,
-            "no_intelligence": no_intelligence,
-            "record_session": record_session,
-            "keep_session_alive": keep_session_alive,
-            "use_existing_session": use_existing_session,
-        }
+
+        # Build payload with only defined values
+        payload = {}
+        if options.args is not None:
+            payload["args"] = options.args
+        if options.files is not None:
+            payload["files"] = [file.model_dump() for file in options.files]
+        if options.use_states is not None:
+            payload["use_states"] = options.use_states
+        if options.preserve_state is not None:
+            payload["preserve_state"] = options.preserve_state
+        if options.no_intelligence:
+            payload["no_intelligence"] = options.no_intelligence
+        if options.record_session:
+            payload["record_session"] = options.record_session
+        if options.keep_session_alive:
+            payload["keep_session_alive"] = options.keep_session_alive
+        if options.use_existing_session is not None:
+            payload["use_existing_session"] = options.use_existing_session
 
         try:
             response = self._client.post(url, json=payload)
@@ -119,7 +120,7 @@ class SyncWitriumClient(WitriumClient):
         except Exception as e:
             raise WitriumClientException(f"Error running workflow: {str(e)}")
 
-    def get_workflow_results(self, run_id: str) -> WorkflowRunResultsSchema:
+    def get_workflow_results(self, run_id: str) -> WorkflowRunResultSchema:
         """
         Get workflow run results.
 
@@ -134,7 +135,7 @@ class SyncWitriumClient(WitriumClient):
         try:
             response = self._client.get(url)
             response.raise_for_status()
-            return WorkflowRunResultsSchema.model_validate(response.json())
+            return WorkflowRunResultSchema.model_validate(response.json())
         except httpx.HTTPStatusError as e:
             error_detail = self._extract_error_detail(e.response)
             raise WitriumClientException(
@@ -146,53 +147,35 @@ class SyncWitriumClient(WitriumClient):
     def run_workflow_and_wait(
         self,
         workflow_id: str,
-        args: Optional[Dict[str, Union[str, int, float]]] = None,
-        files: Optional[List[FileUpload]] = None,
-        use_states: Optional[List[str]] = None,
-        preserve_state: Optional[str] = None,
-        no_intelligence: bool = False,
-        record_session: Optional[bool] = False,
-        keep_session_alive: bool = False,
-        use_existing_session: Optional[str] = None,
-        polling_interval: int = 5,
-        timeout: int = 300,
-        return_intermediate_results: bool = False,
-        on_progress: Optional[Callable[[WorkflowRunResultsSchema], Any]] = None,
-    ) -> Union[WorkflowRunResultsSchema, List[WorkflowRunResultsSchema]]:
+        options: Optional[RunWorkflowAndWaitOptionsSchema] = None,
+    ) -> Union[WorkflowRunResultSchema, List[WorkflowRunResultSchema]]:
         """
         Run a workflow and wait for results by polling until completion.
 
         Args:
             workflow_id: The ID of the workflow to run.
-            args: Optional arguments to pass to the workflow.
-            files: Optional list of files to upload with the workflow.
-            use_states: Optional list of session IDs to use.
-            preserve_state: Optional session ID to preserve.
-            no_intelligence: Whether to run without AI intelligence.
-            record_session: Whether to record the session.
-            keep_session_alive: Whether to keep the session alive after the last instruction is run.
-            use_existing_session: The ID of the existing session to use. This is useful when you want to run a workflow in an existing session.
-            polling_interval: Seconds to wait between polling attempts.
-            timeout: Maximum seconds to poll before timing out.
-            return_intermediate_results: If True, returns a list of all polled results.
-            on_progress: Optional callback function that receives each intermediate result.
-                         This is called on each polling iteration with the current results.
+            options: Optional workflow run and wait options.
 
         Returns:
             Dict containing the final workflow run results, or if return_intermediate_results=True,
             a list of all polled result dictionaries.
         """
+        if options is None:
+            options = RunWorkflowAndWaitOptionsSchema()
+
         # Run the workflow
         run_response = self.run_workflow(
             workflow_id=workflow_id,
-            args=args,
-            files=files,
-            use_states=use_states,
-            preserve_state=preserve_state,
-            no_intelligence=no_intelligence,
-            record_session=record_session,
-            keep_session_alive=keep_session_alive,
-            use_existing_session=use_existing_session,
+            options=WorkflowRunOptionsSchema(
+                args=options.args,
+                files=options.files,
+                use_states=options.use_states,
+                preserve_state=options.preserve_state,
+                no_intelligence=options.no_intelligence,
+                record_session=options.record_session,
+                keep_session_alive=options.keep_session_alive,
+                use_existing_session=options.use_existing_session,
+            ),
         )
 
         run_id = run_response.run_id
@@ -200,66 +183,66 @@ class SyncWitriumClient(WitriumClient):
         intermediate_results = []
 
         # Poll for results
-        while time.time() - start_time < timeout:
+        while time.time() - start_time < options.timeout:
             results = self.get_workflow_results(run_id)
 
             # Store intermediate results if requested
-            if return_intermediate_results:
+            if options.return_intermediate_results:
                 intermediate_results.append(results)
 
             # Call progress callback if provided
-            if on_progress:
-                on_progress(results)
+            if options.on_progress:
+                options.on_progress(results)
 
             # Check if workflow has completed
             if results.status in WorkflowRunStatus.TERMINAL_STATUSES:
-                return intermediate_results if return_intermediate_results else results
+                return (
+                    intermediate_results
+                    if options.return_intermediate_results
+                    else results
+                )
 
             # Wait before polling again
-            time.sleep(polling_interval)
+            time.sleep(options.polling_interval)
 
         raise WitriumClientException(
-            f"Workflow execution timed out after {timeout} seconds"
+            f"Workflow execution timed out after {options.timeout} seconds"
         )
 
     def wait_until_state(
         self,
         run_id: str,
         target_status: str,
-        all_instructions_executed: bool = False,
-        min_wait_time: int = 0,
-        polling_interval: int = 2,
-        timeout: int = 60,
-    ) -> WorkflowRunResultsSchema:
+        options: Optional[WaitUntilStateOptionsSchema] = None,
+    ) -> WorkflowRunResultSchema:
         """
         Wait for a workflow run to reach a specific status by polling.
 
         Args:
             run_id: The ID of the workflow run to wait for.
             target_status: The status to wait for (e.g., WorkflowRunStatus.RUNNING).
-            all_instructions_executed: If True, also wait for all executions to be completed.
-            min_wait_time: Minimum time in seconds to wait before starting polling. Useful when you know approximately how long the workflow will take.
-            polling_interval: Seconds to wait between polling attempts.
-            timeout: Maximum seconds to poll before timing out.
+            options: Optional wait options.
 
         Returns:
-            WorkflowRunResultsSchema when the target status is reached.
+            WorkflowRunResultSchema when the target status is reached.
 
         Raises:
             WitriumClientException: If timeout is reached or workflow reaches an unexpected terminal status.
         """
+        if options is None:
+            options = WaitUntilStateOptionsSchema()
 
         # Wait for minimum time before starting to poll
-        if min_wait_time > 0:
-            time.sleep(min_wait_time)
+        if options.min_wait_time > 0:
+            time.sleep(options.min_wait_time)
 
-        def _check_all_executions_completed(results: WorkflowRunResultsSchema) -> bool:
+        def _check_all_executions_completed(results: WorkflowRunResultSchema) -> bool:
             """Check if all executions have completed status."""
             if not results.executions:
                 return False
             return results.executions[-1].status == AgentExecutionStatus.COMPLETED
 
-        def _should_continue_polling(results: WorkflowRunResultsSchema) -> bool:
+        def _should_continue_polling(results: WorkflowRunResultSchema) -> bool:
             """Determine if we should continue polling based on target status and execution completion."""
             status_not_reached = results.status != target_status
             terminal_status_reached = (
@@ -275,8 +258,9 @@ class SyncWitriumClient(WitriumClient):
                 return True
 
             # If target status is reached but we also need all instructions executed
-            if all_instructions_executed and not _check_all_executions_completed(
-                results
+            if (
+                options.all_instructions_executed
+                and not _check_all_executions_completed(results)
             ):
                 return True
 
@@ -284,8 +268,8 @@ class SyncWitriumClient(WitriumClient):
             return False
 
         @retry(
-            stop=stop_after_delay(timeout),
-            wait=wait_fixed(polling_interval),
+            stop=stop_after_delay(options.timeout),
+            wait=wait_fixed(options.polling_interval),
             retry=retry_if_result(_should_continue_polling),
         )
         def _poll_for_status():
@@ -295,7 +279,7 @@ class SyncWitriumClient(WitriumClient):
             status_reached = results.status == target_status
             all_executions_completed = (
                 _check_all_executions_completed(results)
-                if all_instructions_executed
+                if options.all_instructions_executed
                 else True
             )
 
@@ -322,10 +306,10 @@ class SyncWitriumClient(WitriumClient):
             if "retry" in str(e).lower():
                 target_status_name = WorkflowRunStatus.get_status_name(target_status)
                 condition_msg = f"status '{target_status_name}'"
-                if all_instructions_executed:
+                if options.all_instructions_executed:
                     condition_msg += " and all instructions executed"
                 raise WitriumClientException(
-                    f"Workflow run did not reach {condition_msg} within {timeout} seconds"
+                    f"Workflow run did not reach {condition_msg} within {options.timeout} seconds"
                 )
             raise
 
@@ -366,37 +350,38 @@ class SyncWitriumClient(WitriumClient):
     def run_talent(
         self,
         talent_id: str,
-        args: Optional[Dict[str, Union[str, int, float]]] = None,
-        files: Optional[List[FileUpload]] = None,
-        use_states: Optional[List[str]] = None,
-        preserve_state: Optional[str] = None,
-        keep_session_alive: bool = False,
-        use_existing_session: Optional[str] = None,
+        options: Optional[TalentRunOptionsSchema] = None,
     ) -> TalentResultSchema:
         """
         Run a talent by ID.
 
         Args:
             talent_id: The ID of the talent to run.
-            args: Optional arguments to pass to the workflow.
-            files: Optional list of files to upload with the workflow.
-            use_states: Optional list of state names to use.
-            preserve_state: Optional state name to preserve.
-            keep_session_alive: Whether to keep the session alive.
-            use_existing_session: The ID of the existing session to use.
+            options: Optional talent run options.
 
         Returns:
             The result of the talent run.
         """
+        if options is None:
+            options = TalentRunOptionsSchema()
+
         url = f"{self.base_url}/v1/talents/{talent_id}/run"
-        payload = {
-            "args": args,
-            "files": [file.model_dump() for file in files] if files else None,
-            "use_states": use_states,
-            "preserve_state": preserve_state,
-            "keep_session_alive": keep_session_alive,
-            "use_existing_session": use_existing_session,
-        }
+
+        # Build payload with only defined values
+        payload = {}
+        if options.args is not None:
+            payload["args"] = options.args
+        if options.files is not None:
+            payload["files"] = [file.model_dump() for file in options.files]
+        if options.use_states is not None:
+            payload["use_states"] = options.use_states
+        if options.preserve_state is not None:
+            payload["preserve_state"] = options.preserve_state
+        if options.keep_session_alive:
+            payload["keep_session_alive"] = options.keep_session_alive
+        if options.use_existing_session is not None:
+            payload["use_existing_session"] = options.use_existing_session
+
         try:
             response = self._client.post(url, json=payload)
             response.raise_for_status()
@@ -434,43 +419,41 @@ class AsyncWitriumClient(WitriumClient):
     async def run_workflow(
         self,
         workflow_id: str,
-        args: Optional[Dict[str, Union[str, int, float]]] = None,
-        files: Optional[List[FileUpload]] = None,
-        use_states: Optional[List[str]] = None,
-        preserve_state: Optional[str] = None,
-        no_intelligence: bool = False,
-        record_session: Optional[bool] = False,
-        keep_session_alive: bool = False,
-        use_existing_session: Optional[str] = None,
+        options: Optional[WorkflowRunOptionsSchema] = None,
     ) -> WorkflowRunSubmittedSchema:
         """
         Run a workflow by ID.
 
         Args:
             workflow_id: The ID of the workflow to run.
-            args: Optional arguments to pass to the workflow.
-            files: Optional list of files to upload with the workflow.
-            use_states: Optional list of state names to use.
-            preserve_state: Optional state name to preserve.
-            no_intelligence: Whether to run without AI intelligence.
-            record_session: Whether to record the session.
-            keep_session_alive: Whether to keep the session alive.
-            use_existing_session: The ID of the existing session to use.
+            options: Optional workflow run options.
 
         Returns:
             Dict containing workflow_id, run_id and status.
         """
+        if options is None:
+            options = WorkflowRunOptionsSchema()
+
         url = f"{self.base_url}/v1/workflows/{workflow_id}/run"
-        payload = {
-            "args": args,
-            "files": [file.model_dump() for file in files] if files else None,
-            "use_states": use_states,
-            "preserve_state": preserve_state,
-            "no_intelligence": no_intelligence,
-            "record_session": record_session,
-            "keep_session_alive": keep_session_alive,
-            "use_existing_session": use_existing_session,
-        }
+
+        # Build payload with only defined values
+        payload = {}
+        if options.args is not None:
+            payload["args"] = options.args
+        if options.files is not None:
+            payload["files"] = [file.model_dump() for file in options.files]
+        if options.use_states is not None:
+            payload["use_states"] = options.use_states
+        if options.preserve_state is not None:
+            payload["preserve_state"] = options.preserve_state
+        if options.no_intelligence:
+            payload["no_intelligence"] = options.no_intelligence
+        if options.record_session:
+            payload["record_session"] = options.record_session
+        if options.keep_session_alive:
+            payload["keep_session_alive"] = options.keep_session_alive
+        if options.use_existing_session is not None:
+            payload["use_existing_session"] = options.use_existing_session
 
         try:
             response = await self._client.post(url, json=payload)
@@ -484,7 +467,7 @@ class AsyncWitriumClient(WitriumClient):
         except Exception as e:
             raise WitriumClientException(f"Error running workflow: {str(e)}")
 
-    async def get_workflow_results(self, run_id: str) -> WorkflowRunResultsSchema:
+    async def get_workflow_results(self, run_id: str) -> WorkflowRunResultSchema:
         """
         Get workflow run results.
 
@@ -499,7 +482,7 @@ class AsyncWitriumClient(WitriumClient):
         try:
             response = await self._client.get(url)
             response.raise_for_status()
-            return WorkflowRunResultsSchema.model_validate(response.json())
+            return WorkflowRunResultSchema.model_validate(response.json())
         except httpx.HTTPStatusError as e:
             error_detail = await self._extract_error_detail(e.response)
             raise WitriumClientException(
@@ -511,53 +494,35 @@ class AsyncWitriumClient(WitriumClient):
     async def run_workflow_and_wait(
         self,
         workflow_id: str,
-        args: Optional[Dict[str, Union[str, int, float]]] = None,
-        files: Optional[List[FileUpload]] = None,
-        use_states: Optional[List[str]] = None,
-        preserve_state: Optional[str] = None,
-        no_intelligence: bool = False,
-        record_session: Optional[bool] = False,
-        keep_session_alive: bool = False,
-        use_existing_session: Optional[str] = None,
-        polling_interval: int = 5,
-        timeout: int = 300,
-        return_intermediate_results: bool = False,
-        on_progress: Optional[Callable[[WorkflowRunResultsSchema], Any]] = None,
-    ) -> Union[WorkflowRunResultsSchema, List[WorkflowRunResultsSchema]]:
+        options: Optional[RunWorkflowAndWaitOptionsSchema] = None,
+    ) -> Union[WorkflowRunResultSchema, List[WorkflowRunResultSchema]]:
         """
         Run a workflow and wait for results by polling until completion.
 
         Args:
             workflow_id: The ID of the workflow to run.
-            args: Optional arguments to pass to the workflow.
-            files: Optional list of files to upload with the workflow.
-            use_states: Optional list of session IDs to use.
-            preserve_state: Optional session ID to preserve.
-            no_intelligence: Whether to run without AI intelligence.
-            record_session: Whether to record the session.
-            keep_session_alive: Whether to keep the session alive after the last instruction is run.
-            use_existing_session: The ID of the existing session to use. This is useful when you want to run a workflow in an existing session.
-            polling_interval: Seconds to wait between polling attempts.
-            timeout: Maximum seconds to poll before timing out.
-            return_intermediate_results: If True, returns a list of all polled results.
-            on_progress: Optional callback function that receives each intermediate result.
-                         This is called on each polling iteration with the current results.
+            options: Optional workflow run and wait options.
 
         Returns:
             Dict containing the final workflow run results, or if return_intermediate_results=True,
             a list of all polled result dictionaries.
         """
+        if options is None:
+            options = RunWorkflowAndWaitOptionsSchema()
+
         # Run the workflow
         run_response = await self.run_workflow(
             workflow_id=workflow_id,
-            args=args,
-            files=files,
-            use_states=use_states,
-            preserve_state=preserve_state,
-            no_intelligence=no_intelligence,
-            record_session=record_session,
-            keep_session_alive=keep_session_alive,
-            use_existing_session=use_existing_session,
+            options=WorkflowRunOptionsSchema(
+                args=options.args,
+                files=options.files,
+                use_states=options.use_states,
+                preserve_state=options.preserve_state,
+                no_intelligence=options.no_intelligence,
+                record_session=options.record_session,
+                keep_session_alive=options.keep_session_alive,
+                use_existing_session=options.use_existing_session,
+            ),
         )
 
         run_id = run_response.run_id
@@ -565,66 +530,66 @@ class AsyncWitriumClient(WitriumClient):
         intermediate_results = []
 
         # Poll for results
-        while time.time() - start_time < timeout:
+        while time.time() - start_time < options.timeout:
             results = await self.get_workflow_results(run_id)
 
             # Store intermediate results if requested
-            if return_intermediate_results:
+            if options.return_intermediate_results:
                 intermediate_results.append(results)
 
             # Call progress callback if provided
-            if on_progress:
-                on_progress(results)
+            if options.on_progress:
+                options.on_progress(results)
 
             # Check if workflow run has completed
             if results.status in WorkflowRunStatus.TERMINAL_STATUSES:
-                return intermediate_results if return_intermediate_results else results
+                return (
+                    intermediate_results
+                    if options.return_intermediate_results
+                    else results
+                )
 
             # Wait before polling again
-            await asyncio.sleep(polling_interval)
+            await asyncio.sleep(options.polling_interval)
 
         raise WitriumClientException(
-            f"Workflow execution timed out after {timeout} seconds"
+            f"Workflow execution timed out after {options.timeout} seconds"
         )
 
     async def wait_until_state(
         self,
         run_id: str,
         target_status: str,
-        all_instructions_executed: bool = False,
-        min_wait_time: int = 0,
-        polling_interval: int = 2,
-        timeout: int = 60,
-    ) -> WorkflowRunResultsSchema:
+        options: Optional[WaitUntilStateOptionsSchema] = None,
+    ) -> WorkflowRunResultSchema:
         """
         Wait for a workflow run to reach a specific status by polling.
 
         Args:
             run_id: The ID of the workflow run to wait for.
             target_status: The status to wait for (e.g., WorkflowRunStatus.RUNNING).
-            all_instructions_executed: If True, also wait for all executions to be completed.
-            min_wait_time: Minimum time in seconds to wait before starting polling. Useful when you know approximately how long the workflow will take.
-            polling_interval: Seconds to wait between polling attempts.
-            timeout: Maximum seconds to poll before timing out.
+            options: Optional wait options.
 
         Returns:
-            WorkflowRunResultsSchema when the target status is reached.
+            WorkflowRunResultSchema when the target status is reached.
 
         Raises:
             WitriumClientException: If timeout is reached or workflow reaches an unexpected terminal status.
         """
+        if options is None:
+            options = WaitUntilStateOptionsSchema()
 
         # Wait for minimum time before starting to poll
-        if min_wait_time > 0:
-            await asyncio.sleep(min_wait_time)
+        if options.min_wait_time > 0:
+            await asyncio.sleep(options.min_wait_time)
 
-        def _check_all_executions_completed(results: WorkflowRunResultsSchema) -> bool:
+        def _check_all_executions_completed(results: WorkflowRunResultSchema) -> bool:
             """Check if all executions have completed status."""
             if not results.executions:
                 return False
             return results.executions[-1].status == AgentExecutionStatus.COMPLETED
 
-        def _should_continue_polling(results: WorkflowRunResultsSchema) -> bool:
+        def _should_continue_polling(results: WorkflowRunResultSchema) -> bool:
             """Determine if we should continue polling based on target status and execution completion."""
             status_not_reached = results.status != target_status
             terminal_status_reached = (
@@ -640,8 +605,9 @@ class AsyncWitriumClient(WitriumClient):
                 return True
 
             # If target status is reached but we also need all instructions executed
-            if all_instructions_executed and not _check_all_executions_completed(
-                results
+            if (
+                options.all_instructions_executed
+                and not _check_all_executions_completed(results)
             ):
                 return True
 
@@ -649,8 +615,8 @@ class AsyncWitriumClient(WitriumClient):
             return False
 
         @retry(
-            stop=stop_after_delay(timeout),
-            wait=wait_fixed(polling_interval),
+            stop=stop_after_delay(options.timeout),
+            wait=wait_fixed(options.polling_interval),
             retry=retry_if_result(_should_continue_polling),
         )
         async def _poll_for_status():
@@ -660,7 +626,7 @@ class AsyncWitriumClient(WitriumClient):
             status_reached = results.status == target_status
             all_executions_completed = (
                 _check_all_executions_completed(results)
-                if all_instructions_executed
+                if options.all_instructions_executed
                 else True
             )
 
@@ -687,10 +653,10 @@ class AsyncWitriumClient(WitriumClient):
             if "retry" in str(e).lower():
                 target_status_name = WorkflowRunStatus.get_status_name(target_status)
                 condition_msg = f"status '{target_status_name}'"
-                if all_instructions_executed:
+                if options.all_instructions_executed:
                     condition_msg += " and all instructions executed"
                 raise WitriumClientException(
-                    f"Workflow run did not reach {condition_msg} within {timeout} seconds"
+                    f"Workflow run did not reach {condition_msg} within {options.timeout} seconds"
                 )
             raise
 
@@ -731,37 +697,38 @@ class AsyncWitriumClient(WitriumClient):
     async def run_talent(
         self,
         talent_id: str,
-        args: Optional[Dict[str, Union[str, int, float]]] = None,
-        files: Optional[List[FileUpload]] = None,
-        use_states: Optional[List[str]] = None,
-        preserve_state: Optional[str] = None,
-        keep_session_alive: bool = False,
-        use_existing_session: Optional[str] = None,
+        options: Optional[TalentRunOptionsSchema] = None,
     ) -> TalentResultSchema:
         """
         Run a talent by ID.
 
         Args:
             talent_id: The ID of the talent to run.
-            args: Optional arguments to pass to the workflow.
-            files: Optional list of files to upload with the workflow.
-            use_states: Optional list of state names to use.
-            preserve_state: Optional state name to preserve.
-            keep_session_alive: Whether to keep the session alive.
-            use_existing_session: The ID of the existing session to use.
+            options: Optional talent run options.
 
         Returns:
             The result of the talent run.
         """
+        if options is None:
+            options = TalentRunOptionsSchema()
+
         url = f"{self.base_url}/v1/talents/{talent_id}/run"
-        payload = {
-            "args": args,
-            "files": [file.model_dump() for file in files] if files else None,
-            "use_states": use_states,
-            "preserve_state": preserve_state,
-            "keep_session_alive": keep_session_alive,
-            "use_existing_session": use_existing_session,
-        }
+
+        # Build payload with only defined values
+        payload = {}
+        if options.args is not None:
+            payload["args"] = options.args
+        if options.files is not None:
+            payload["files"] = [file.model_dump() for file in options.files]
+        if options.use_states is not None:
+            payload["use_states"] = options.use_states
+        if options.preserve_state is not None:
+            payload["preserve_state"] = options.preserve_state
+        if options.keep_session_alive:
+            payload["keep_session_alive"] = options.keep_session_alive
+        if options.use_existing_session is not None:
+            payload["use_existing_session"] = options.use_existing_session
+
         try:
             response = await self._client.post(url, json=payload)
             response.raise_for_status()
