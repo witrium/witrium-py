@@ -387,19 +387,16 @@ In addition to workflows, you can execute "Talents" directly. Talents are pre-de
 
 ```python
 from witrium import SyncWitriumClient
-from witrium.types import TalentExecuteSchema
 
 with SyncWitriumClient(api_token="your-api-token") as client:
     # Run a talent by ID with its execution schema
     result = client.run_talent(
         talent_id="talent-uuid",
-        execute_schema=TalentExecuteSchema(
-            args={"key": "value"},
-            # Optional parameters:
-            # files=[...],
-            # use_states=["state-id"],
-            # preserve_state="new-state-name"
-        )
+        args={"key": "value"},
+         # Optional parameters:
+         # files=[...],
+         # use_states=["state-id"],
+         # preserve_state="new-state-name"
     )
 
     # The result is a TalentResultSchema object
@@ -623,7 +620,7 @@ Run a talent by ID.
 ```python
 run_talent(
     talent_id: str,                      # Required: ID of the talent to run
-    execute_schema: TalentExecuteSchema  # Required: Schema containing args, files, etc.
+    args: Optional[Dict[str, Union[str, int, float]]] = None,  # Arguments to pass to the talent
 ) -> TalentResultSchema
 ```
 

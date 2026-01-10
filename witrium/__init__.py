@@ -12,10 +12,8 @@ from witrium.types import (
     WorkflowRunResultsSchema,
     WorkflowRunSchema,
     WorkflowRunStatus,
-    WorkflowRunExecuteSchema,
     WorkflowRunExecutionSchema,
     WorkflowSchema,
-    TalentExecuteSchema,
     TalentResultSchema,
 )
 
@@ -32,10 +30,8 @@ __all__ = [
     "WorkflowRunResultsSchema",
     "WorkflowRunSchema",
     "WorkflowRunStatus",
-    "WorkflowRunExecuteSchema",
     "WorkflowRunExecutionSchema",
     "WorkflowSchema",
-    "TalentExecuteSchema",
     "TalentResultSchema",
     "__version__",
 ]

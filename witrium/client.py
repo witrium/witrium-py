@@ -5,7 +5,6 @@ import httpx
 from typing import Dict, List, Optional, Any, Union, Callable
 from tenacity import retry, stop_after_delay, wait_fixed, retry_if_result
 from witrium.types import (
-    TalentExecuteSchema,
     WorkflowRunSubmittedSchema,
     WorkflowRunResultsSchema,
     WorkflowRunSchema,
@@ -365,20 +364,39 @@ class SyncWitriumClient(WitriumClient):
             return response.text or "Unknown error"
 
     def run_talent(
-        self, talent_id: str, execute_schema: TalentExecuteSchema
+        self,
+        talent_id: str,
+        args: Optional[Dict[str, Union[str, int, float]]] = None,
+        files: Optional[List[FileUpload]] = None,
+        use_states: Optional[List[str]] = None,
+        preserve_state: Optional[str] = None,
+        keep_session_alive: bool = False,
+        use_existing_session: Optional[str] = None,
     ) -> TalentResultSchema:
         """
         Run a talent by ID.
 
         Args:
             talent_id: The ID of the talent to run.
-            execute_schema: The schema to execute the talent.
+            args: Optional arguments to pass to the workflow.
+            files: Optional list of files to upload with the workflow.
+            use_states: Optional list of state names to use.
+            preserve_state: Optional state name to preserve.
+            keep_session_alive: Whether to keep the session alive.
+            use_existing_session: The ID of the existing session to use.
 
         Returns:
             The result of the talent run.
         """
         url = f"{self.base_url}/v1/talents/{talent_id}/run"
-        payload = execute_schema.model_dump()
+        payload = {
+            "args": args,
+            "files": [file.model_dump() for file in files] if files else None,
+            "use_states": use_states,
+            "preserve_state": preserve_state,
+            "keep_session_alive": keep_session_alive,
+            "use_existing_session": use_existing_session,
+        }
         try:
             response = self._client.post(url, json=payload)
             response.raise_for_status()
@@ -711,20 +729,39 @@ class AsyncWitriumClient(WitriumClient):
             return response.text or "Unknown error"
 
     async def run_talent(
-        self, talent_id: str, execute_schema: TalentExecuteSchema
+        self,
+        talent_id: str,
+        args: Optional[Dict[str, Union[str, int, float]]] = None,
+        files: Optional[List[FileUpload]] = None,
+        use_states: Optional[List[str]] = None,
+        preserve_state: Optional[str] = None,
+        keep_session_alive: bool = False,
+        use_existing_session: Optional[str] = None,
     ) -> TalentResultSchema:
         """
         Run a talent by ID.
 
         Args:
             talent_id: The ID of the talent to run.
-            execute_schema: The schema to execute the talent.
+            args: Optional arguments to pass to the workflow.
+            files: Optional list of files to upload with the workflow.
+            use_states: Optional list of state names to use.
+            preserve_state: Optional state name to preserve.
+            keep_session_alive: Whether to keep the session alive.
+            use_existing_session: The ID of the existing session to use.
 
         Returns:
             The result of the talent run.
         """
         url = f"{self.base_url}/v1/talents/{talent_id}/run"
-        payload = execute_schema.model_dump()
+        payload = {
+            "args": args,
+            "files": [file.model_dump() for file in files] if files else None,
+            "use_states": use_states,
+            "preserve_state": preserve_state,
+            "keep_session_alive": keep_session_alive,
+            "use_existing_session": use_existing_session,
+        }
         try:
             response = await self._client.post(url, json=payload)
             response.raise_for_status()

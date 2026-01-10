@@ -14,17 +14,6 @@ class FileUpload(BaseModel):
     data: str  # base64 encoded file content
 
 
-class WorkflowRunExecuteSchema(BaseModel):
-    args: Optional[dict[str, str | int | float]] = None
-    files: Optional[List[FileUpload]] = None
-    use_states: Optional[List[str]] = None
-    preserve_state: Optional[str] = None
-    no_intelligence: bool = False
-    record_session: bool = False
-    keep_session_alive: bool = False
-    use_existing_session: Optional[str] = None
-
-
 class WorkflowRunSubmittedSchema(BaseModel):
     workflow_id: str
     run_id: str
@@ -131,13 +120,6 @@ class AgentExecutionStatus:
     def get_status_name(cls, status_code: str) -> str:
         """Get human-readable status name from status code."""
         return cls.STATUS_NAMES.get(status_code, status_code)
-
-
-class TalentExecuteSchema(BaseModel):
-    args: Optional[dict[str, Any]] = None
-    files: Optional[List[FileUpload]] = None
-    use_states: Optional[List[str]] = None
-    preserve_state: Optional[str] = None
 
 
 class TalentResultSchema(BaseModel):
