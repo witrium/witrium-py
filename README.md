@@ -24,48 +24,139 @@ pip install witrium
 The snippet below shows the **minimum** you need to get up-and-running:
 
 ```python
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import WorkflowRunOptionsSchema, WaitUntilStateOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
 
-# 1. Provide your API endpoint & token (export these as env-vars in production)
+# 1. Provide your API token (export as env-var in production)
 api_token = "YOUR_WITRIUM_API_TOKEN"  # Obtain from dashboard
 
+# 2. Use context manager for automatic browser session management
 with SyncWitriumClient(api_token=api_token) as client:
-    # 2. Kick-off the **login** workflow and keep the browser alive
+    # Browser session is automatically created
+    # client.session_id contains the browser session ID
+    
+    # 3. Run workflows
     login = client.run_workflow(
-        workflow_id="login-workflow-id",  # This workflow performs the sign-in steps
+        workflow_id="login-workflow-id",
         options=WorkflowRunOptionsSchema(
-            args={"username": "user@example.com", "password": "secretPass!"},
-            keep_session_alive=True  # 🔑 keep the browser running after login
+            args={"username": "user@example.com", "password": "secretPass!"}
         )
     )
-
-    # 3. Block until the browser is *ready for reuse*
-    client.wait_until_state(
-        run_id=login.run_id,
-        target_status=WorkflowRunStatus.RUNNING,  # Wait until browser is alive
-        options=WaitUntilStateOptionsSchema(
-            all_instructions_executed=True  # …and the last login step finished
-        )
-    )
-
-    # 4. Re-use that **same** browser session in a follow-up workflow
-    scrape = client.run_workflow(
+    
+    # 4. Run another workflow in the same browser session
+    scrape = client.run_workflow_and_wait(
         workflow_id="dashboard-scrape-workflow-id",
+        options=WorkflowRunOptionsSchema(args={"section": "sales"})
+    )
+    
+    # 5. Browser session is automatically closed when exiting context
+    print("Sales data:", scrape.result)
+```
+
+---
+
+## Browser Session Management
+
+Witrium SDK provides context managers that automatically handle browser lifecycle for you. This is the **recommended approach** for running workflows and/or talents that need to share browser state.
+
+### Automatic Session Management (Recommended)
+
+When you use the context manager, a browser session is automatically created when entering and closed when exiting:
+
+```python
+from witrium import AsyncWitriumClient
+
+async with AsyncWitriumClient(api_token="...") as client:
+    # Browser session automatically created
+    print(f"Session ID: {client.session_id}")
+    
+    # All workflows automatically use this session
+    result1 = await client.run_workflow("workflow-1")
+    result2 = await client.run_talent("talent-1")
+    
+    # Session automatically closed on exit
+```
+
+### Custom Session Options
+
+Configure the browser session with specific settings (These are options similar to the ones you'll find in the dashboard):
+
+```python
+from witrium import AsyncWitriumClient, BrowserSessionCreateOptions
+
+session_opts = BrowserSessionCreateOptions(
+    provider="omega",
+    use_proxy=True,
+    proxy_country="uk",
+    use_states=["my-saved-state"]  # Restore browser state
+)
+
+async with AsyncWitriumClient(
+    api_token="...",
+    session_options=session_opts
+) as client:
+    # Browser session created with UK proxy and restored state
+    result = await client.run_workflow("workflow-id")
+```
+
+### Manual Session Management
+
+For advanced use cases, manage browser sessions explicitly:
+
+```python
+client = AsyncWitriumClient(api_token="...")
+
+# Create a browser session
+session = await client.create_browser_session(
+    BrowserSessionCreateOptions(use_proxy=True)
+)
+print(f"Created session: {session.uuid}")
+
+# List all active sessions
+sessions = await client.list_browser_sessions()
+print(f"Active sessions: {sessions.total_count}")
+
+# Get session details
+details = await client.get_browser_session(session.uuid)
+print(f"Session status: {details.status}")
+
+# Use session explicitly
+result = await client.run_workflow(
+    "workflow-id",
+    options=WorkflowRunOptionsSchema(browser_session_id=session.uuid)
+)
+
+# Close session when done
+await client.close_browser_session(session.uuid)
+await client.close()
+```
+
+### Important: `use_states` Behavior
+
+**When using a browser session, `use_states` is set at the session level, not the individual run level.**
+
+```python
+# use_states in session options applies to ALL runs
+session_opts = BrowserSessionCreateOptions(
+    use_states=["state-from-session"]  # ✅ This will be used
+)
+
+async with AsyncWitriumClient(api_token="...", session_options=session_opts) as client:
+    result = await client.run_workflow(
+        "workflow-id",
         options=WorkflowRunOptionsSchema(
-            args={"section": "sales"},
-            use_existing_session=login.run_id  # 👈 same browser instance
+            use_states=["ignored"]  # ❌ This is IGNORED when using a session
         )
     )
-
-    # 5. Wait for the scrape to finish and collect the results
-    results = client.wait_until_state(
-        run_id=scrape.run_id,
-        target_status=WorkflowRunStatus.COMPLETED
-    )
-
-print("Sales data:", results.result)
 ```
+
+If you need different `use_states` for different runs, create separate browser sessions.
+
+### Available Browser Session Methods
+
+- `create_browser_session(options)` - Create a new browser session
+- `list_browser_sessions()` - List all active sessions
+- `get_browser_session(session_uuid)` - Get session details
+- `close_browser_session(session_uuid, force=False)` - Close a session
 
 ---
 
@@ -81,17 +172,15 @@ print("Sales data:", results.result)
 
 ### When to wait for which state?
 
-| Scenario | Recommended `target_status` | Extra flags |
-|----------|-----------------------------|-------------|
-| You **saved state** using `preserve_state` | `COMPLETED` | – |
-| You **kept the session alive** using `keep_session_alive` **and intend to reuse it** | `RUNNING` | `all_instructions_executed=True` |
+| Scenario | Recommended `target_status` |
+|----------|-----------------------------|
+| You want to wait till the workflow run has completed | `COMPLETED` |
+| You want to wait till the workflow has just started its run | `RUNNING` |
 
-> ⏳ **Tip:** For very long login flows (e.g. multi-factor auth) combine `min_wait_time` with `polling_interval` to reduce server load.
+### Parallel vs. Serial Execution
 
-### Concurrency vs. Serial Execution
-
-• **State Preservation (`preserve_state`)** – Each follow-up workflow spins up its **own** browser.  Scale **horizontally** & run many in parallel.  
-• **Session Persistence (`keep_session_alive`)** – All follow-up workflows share **one** browser instance.  Run them **serially** (until multi-tab support lands).
+• **Parallel Execution** – You can run the same workflow or talent in different context managers and each will spin up a different browser for true parallelism.  
+• **Serial Execution** – All workflows in the context manager share **one** browser session. They are to be run serially.
 
 ---
 
@@ -99,15 +188,17 @@ print("Sales data:", results.result)
 
 ### The Authentication Challenge
 
-A common pattern in web automation involves authentication: you need to log into a service first, then perform actions in the authenticated session. Witrium provides two powerful approaches to handle this:
+A common pattern in web automation involves authentication: you need to log into a service first, then perform actions in the authenticated session. Witrium provides several approaches:
 
-#### Approach 1: State Preservation (Concurrent-Friendly)
-- Best for: Running multiple post-login automations concurrently
-- How it works: Save browser state after login, then restore it in new browser instances
+#### Approach 1: State Preservation (Parallel-Friendly)
+- **Best for:** Running multiple post-login automations concurrently
+- **How it works:** Save browser state after login, then restore it in new browser instances
+- **Advantages:** Horizontal scaling, isolation between runs
 
-#### Approach 2: Session Persistence (Resource-Efficient)
-- Best for: Sequential automations that need to share the exact same browser session
-- How it works: Keep the browser alive after login, run subsequent automations in the same instance
+#### Approach 2: Custom Session Management (Advanced)
+- **Best for:** Complex workflows requiring fine-grained session control
+- **How it works:** Manually create, manage, and close browser sessions
+- **Advantages:** Full control over session lifecycle
 
 ## Session Management Patterns
 
@@ -124,8 +215,7 @@ This approach allows you to save the browser state (cookies, localStorage, etc.)
 **Use Case Example:**
 
 ```python
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import WorkflowRunOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunStatus, WorkflowRunOptionsSchema
 
 with SyncWitriumClient(api_token="your-api-token") as client:
     # Step 1: Run login workflow and preserve the authenticated state
@@ -147,99 +237,79 @@ with SyncWitriumClient(api_token="your-api-token") as client:
 # Each will spawn a new browser but restore the authenticated state
 
 # Workflow A: Extract data from dashboard
-dashboard_response = client.run_workflow(
-    workflow_id="dashboard-scraping-workflow-id",
-    options=WorkflowRunOptionsSchema(
-        args={"report_type": "monthly"},
-        use_states=["authenticated-session"]  # Restore the saved state
+with SyncWitriumClient(api_token="your-api-token") as client:
+    dashboard_response = client.run_workflow(
+        workflow_id="dashboard-scraping-workflow-id",
+        options=WorkflowRunOptionsSchema(
+            args={"report_type": "monthly"},
+            use_states=["authenticated-session"]  # Restore the saved state
+        )
     )
-)
 
 # Workflow B: Update user profile (can run concurrently)
-profile_response = client.run_workflow(
-    workflow_id="profile-update-workflow-id",
-    options=WorkflowRunOptionsSchema(
-        args={"new_email": "newemail@example.com"},
-        use_states=["authenticated-session"]  # Same state, different browser instance
+with SyncWitriumClient(api_token="your-api-token") as client:
+    profile_response = client.run_workflow(
+        workflow_id="profile-update-workflow-id",
+        options=WorkflowRunOptionsSchema(
+            args={"new_email": "newemail@example.com"},
+            use_states=["authenticated-session"]  # Same state, different browser instance
+        )
     )
-)
 
 # Both workflows are now running concurrently in separate browser instances
 # but both have access to the authenticated session
 ```
 
-### Pattern 2: Persistent Session with Keep-Alive
+### Pattern 2: Shared Browser Session (Recommended)
 
-This approach keeps the browser instance alive after the login workflow completes, allowing subsequent workflows to run in the same browser session.
+This approach uses same browser instance across workflows. The browser session is created when entering and closed when exiting the context manager.
 
 **Advantages:**
-- More resource-efficient (reuses same browser instance)
-- Maintains exact session continuity
-- No need to restore state (session never ends)
-- Faster execution for subsequent workflows
-
-**Limitations:**
-- Subsequent workflows must run serially (one after another)
-- Cannot run multiple post-login workflows concurrently in the same session
+- Simple and clean API
+- Automatic resource cleanup
+- Resource-efficient (reuses same browser instance)
+- No manual session lifecycle management
 
 **Use Case Example:**
 
 ```python
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import WorkflowRunOptionsSchema, WaitUntilStateOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
 
 with SyncWitriumClient(api_token="your-api-token") as client:
-    # Step 1: Run login workflow and keep the browser session alive
-    login_response = client.run_workflow(
+    # Browser session automatically created
+    # client.session_id contains the session UUID
+    
+    # Step 1: Run login workflow
+    login_response = client.run_workflow_and_wait(
         workflow_id="login-workflow-id",
         options=WorkflowRunOptionsSchema(
-            args={"username": "user@example.com", "password": "secure123"},
-            keep_session_alive=True  # Keep browser instance running
+            args={"username": "user@example.com", "password": "secure123"}
         )
     )
+    print("Login completed")
 
-    # Step 2: Wait for login to complete and start running
-    # We wait for RUNNING status because the browser is kept alive
-    login_results = client.wait_until_state(
-        run_id=login_response.run_id,
-        target_status=WorkflowRunStatus.RUNNING,
-        options=WaitUntilStateOptionsSchema(
-            all_instructions_executed=True  # Ensure login steps are done
-        )
-    )
-
-    # Step 3: Run subsequent workflows in the same browser session
-    # These must run serially, not concurrently
-
+    # Step 2: Run subsequent workflows - they automatically use the same session
     # Workflow A: Extract data from dashboard
-    dashboard_response = client.run_workflow(
+    dashboard_results = client.run_workflow_and_wait(
         workflow_id="dashboard-scraping-workflow-id",
-        options=WorkflowRunOptionsSchema(
-            args={"report_type": "monthly"},
-            use_existing_session=login_response.run_id  # Use the live session
-        )
+        options=WorkflowRunOptionsSchema(args={"report_type": "monthly"})
     )
+    print(f"Dashboard data: {dashboard_results.result}")
 
-    # Wait for dashboard workflow to complete before next one
-    dashboard_results = client.wait_until_state(
-        run_id=dashboard_response.run_id,
-        target_status=WorkflowRunStatus.COMPLETED
-    )
-
-    # Workflow B: Update user profile (must wait for previous to complete)
-    profile_response = client.run_workflow(
+    # Workflow B: Update user profile
+    profile_results = client.run_workflow_and_wait(
         workflow_id="profile-update-workflow-id",
-        options=WorkflowRunOptionsSchema(
-            args={"new_email": "newemail@example.com"},
-            use_existing_session=login_response.run_id  # Same live session
-        )
+        options=WorkflowRunOptionsSchema(args={"new_email": "newemail@example.com"})
     )
+    print("Profile updated")
+    
+    # Browser session automatically closed on exit
 ```
 
 ### Choosing the Right Pattern
 
-| Factor | State Preservation | Session Persistence |
-|--------|-------------------|-------------------|
+| Factor | State Preservation | Shared Browser Session |
+|--------|-------------------|------------------------|
 | **Concurrency** | ✅ Multiple workflows can run simultaneously | ❌ Must run serially |
 | **Resource Usage** | Higher (multiple browser instances) | ✅ Lower (single browser instance) |
 | **Isolation** | ✅ Complete isolation between workflows | ❌ Shared session state |
@@ -251,8 +321,7 @@ with SyncWitriumClient(api_token="your-api-token") as client:
 ### Example 1: E-commerce Data Extraction (State Preservation)
 
 ```python
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import WorkflowRunOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunStatus, WorkflowRunOptionsSchema
 import concurrent.futures
 import logging
 
@@ -260,26 +329,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def extract_category_data(client, category, state_name):
+def extract_category_data(category, state_name):
     """Extract data for a specific product category."""
-    try:
-        response = client.run_workflow(
-            workflow_id="category-scraper-workflow",
-            options=WorkflowRunOptionsSchema(
-                args={"category": category},
-                use_states=[state_name]
+    with SyncWitriumClient(api_token="your-api-token") as client:
+        try:
+            response = client.run_workflow(
+                workflow_id="category-scraper-workflow",
+                options=WorkflowRunOptionsSchema(
+                    args={"category": category},
+                    use_states=[state_name]
+                )
             )
-        )
 
-        results = client.wait_until_state(
-            run_id=response.run_id,
-            target_status=WorkflowRunStatus.COMPLETED
-        )
+            results = client.wait_until_state(
+                run_id=response.run_id,
+                target_status=WorkflowRunStatus.COMPLETED
+            )
 
-        return {"category": category, "data": results.result}
-    except Exception as e:
-        logger.error(f"Failed to extract {category}: {e}")
-        return {"category": category, "error": str(e)}
+            return {"category": category, "data": results.result}
+        except Exception as e:
+            logger.error(f"Failed to extract {category}: {e}")
+            return {"category": category, "error": str(e)}
 
 
 with SyncWitriumClient(api_token="your-api-token") as client:
@@ -300,144 +370,115 @@ with SyncWitriumClient(api_token="your-api-token") as client:
     )
     logger.info("Login completed, state preserved")
 
-    # Step 2: Extract data from multiple categories concurrently
-    categories = ["electronics", "clothing", "home-garden", "books", "sports"]
+# Step 2: Extract data from multiple categories concurrently
+categories = ["electronics", "clothing", "home-garden", "books", "sports"]
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        # Submit all category extraction tasks concurrently
-        future_to_category = {
-            executor.submit(extract_category_data, client, category,
-                            "ecommerce-authenticated"): category
-            for category in categories
-        }
+with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    # Submit all category extraction tasks concurrently
+    future_to_category = {
+        executor.submit(extract_category_data, category,
+                        "ecommerce-authenticated"): category
+        for category in categories
+    }
 
-        results = []
-        for future in concurrent.futures.as_completed(future_to_category):
-            result = future.result()
-            results.append(result)
-            logger.info(f"Completed extraction for {result['category']}")
+    results = []
+    for future in concurrent.futures.as_completed(future_to_category):
+        result = future.result()
+        results.append(result)
+        logger.info(f"Completed extraction for {result['category']}")
 
-    logger.info(f"Extracted data from {len(results)} categories")
-    for result in results:
-        if "error" in result:
-            logger.error(f"Error in {result['category']}: {result['error']}")
-        else:
-            logger.info(f"{result['category']}: {len(result['data'])} items extracted")
+logger.info(f"Extracted data from {len(results)} categories")
+for result in results:
+    if "error" in result:
+        logger.error(f"Error in {result['category']}: {result['error']}")
+    else:
+        logger.info(f"{result['category']}: {len(result['data'])} items extracted")
 ```
 
-### Example 2: Banking Workflow (Session Persistence)
+### Example 2: Banking Workflow (Managed Sessions)
 
 ```python
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import WorkflowRunOptionsSchema, WaitUntilStateOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 with SyncWitriumClient(api_token="your-api-token") as client:
+    # Browser session automatically created
+    logger.info(f"Browser session created: {client.session_id}")
+    
     # Step 1: Secure login with 2FA
     logger.info("Initiating secure banking login...")
-    login_response = client.run_workflow(
+    login_results = client.run_workflow_and_wait(
         workflow_id="bank-login-with-2fa-workflow",
         options=WorkflowRunOptionsSchema(
             args={
                 "username": "customer123",
                 "password": "secure456",
                 "phone_number": "+1234567890"  # For 2FA
-            },
-            keep_session_alive=True  # Keep session for subsequent operations
-        )
-    )
-
-    # Wait for login and 2FA to complete
-    logger.info("Waiting for login and 2FA completion...")
-    login_results = client.wait_until_state(
-        run_id=login_response.run_id,
-        target_status=WorkflowRunStatus.RUNNING,
-        options=WaitUntilStateOptionsSchema(
-            all_instructions_executed=True,
-            min_wait_time=30  # 2FA usually takes some time
+            }
         )
     )
     logger.info("Secure login completed")
 
     # Step 2: Check account balances
     logger.info("Checking account balances...")
-    balance_response = client.run_workflow(
+    balance_results = client.run_workflow_and_wait(
         workflow_id="check-balances-workflow",
         options=WorkflowRunOptionsSchema(
-            args={"account_types": ["checking", "savings", "credit"]},
-            use_existing_session=login_response.run_id
+            args={"account_types": ["checking", "savings", "credit"]}
         )
-    )
-
-    balance_results = client.wait_until_state(
-        run_id=balance_response.run_id,
-        target_status=WorkflowRunStatus.COMPLETED
     )
     logger.info(f"Account balances retrieved: {balance_results.result}")
 
     # Step 3: Download transaction history
     logger.info("Downloading transaction history...")
-    transaction_response = client.run_workflow(
+    transaction_results = client.run_workflow_and_wait(
         workflow_id="download-transactions-workflow",
         options=WorkflowRunOptionsSchema(
             args={
                 "date_range": "last_30_days",
                 "format": "csv",
                 "accounts": ["checking", "savings"]
-            },
-            use_existing_session=login_response.run_id
+            }
         )
-    )
-
-    transaction_results = client.wait_until_state(
-        run_id=transaction_response.run_id,
-        target_status=WorkflowRunStatus.COMPLETED
     )
     logger.info("Transaction history downloaded")
 
     # Step 4: Generate financial report
     logger.info("Generating financial report...")
-    report_response = client.run_workflow(
+    report_results = client.run_workflow_and_wait(
         workflow_id="generate-financial-report-workflow",
         options=WorkflowRunOptionsSchema(
             args={
                 "report_type": "monthly_summary",
                 "include_charts": True
-            },
-            use_existing_session=login_response.run_id
+            }
         )
-    )
-
-    report_results = client.wait_until_state(
-        run_id=report_response.run_id,
-        target_status=WorkflowRunStatus.COMPLETED
     )
 
     logger.info("Financial report generated successfully")
     logger.info("All banking operations completed in the same secure session")
+    # Browser session automatically closed on exit
 ```
 
 ## Running Talents
 
-In addition to workflows, you can execute "Talents" directly. Talents are pre-defined capabilities or simpler automation units that can be executed with specific arguments.
+In addition to workflows, you can execute "Talents" directly. Talents are pre-defined capabilities or simpler automation units that can be executed with specific arguments. When using a context manager, talents automatically use the managed browser session.
 
 ```python
-from witrium import SyncWitriumClient
-from witrium.types import TalentRunOptionsSchema
+from witrium import SyncWitriumClient, TalentRunOptionsSchema
 
 with SyncWitriumClient(api_token="your-api-token") as client:
+    # Browser session automatically created and used
+    
     # Run a talent by ID with options
     result = client.run_talent(
         talent_id="talent-uuid",
         options=TalentRunOptionsSchema(
-            args={"key": "value"},
-            # Optional parameters:
-            # files=[...],
-            # use_states=["state-id"],
-            # preserve_state="new-state-name"
+            args={"key": "value"}
+            # browser_session_id is automatically set to client.session_id
         )
     )
 
@@ -446,18 +487,77 @@ with SyncWitriumClient(api_token="your-api-token") as client:
     print(f"Result data: {result.result}")
     if result.error_message:
         print(f"Error: {result.error_message}")
+    # Browser session automatically closed and cleaned up
 ```
+
+### Combining Workflows and Talents in the Same Session
+
+A common use case is running both workflows and talents in the same browser session context. This allows you to chain a workflow (e.g., login or navigation) with talent execution that operates on the resulting browser state.
+
+```python
+import asyncio
+from witrium import AsyncWitriumClient, WorkflowRunOptionsSchema, TalentRunOptionsSchema
+
+async def main():
+    async with AsyncWitriumClient(api_token="your-api-token") as client:
+        # Browser session automatically created
+        print(f"Session ID: {client.session_id}")
+
+        # Step 1: Run a workflow to set up the browser state (e.g., login, navigate)
+        print("Running setup workflow...")
+        workflow_result = await client.run_workflow_and_wait(
+            workflow_id="setup-workflow-id",
+            options=WorkflowRunOptionsSchema(
+                args={"username": "user@example.com", "password": "secure123"}
+            )
+        )
+        print(f"Workflow completed: {workflow_result.status}")
+
+        # Step 2: Run a talent in the same browser session
+        # The talent will operate on the browser state left by the workflow
+        print("Running talent...")
+        talent_result = await client.run_talent(
+            talent_id="data-extraction-talent-id",
+            options=TalentRunOptionsSchema(
+                args={"product_id": "ABC123", "include_reviews": True}
+            )
+        )
+        print(f"Talent result: {talent_result.result}")
+
+        # Step 3: Optionally run another workflow using the same session
+        print("Running follow-up workflow...")
+        followup_result = await client.run_workflow_and_wait(
+            workflow_id="cleanup-workflow-id"
+        )
+        print(f"Follow-up completed: {followup_result.status}")
+
+        # Check session details at any point
+        session = await client.get_browser_session(client.session_id)
+        print(f"Session status: {session.status}, Busy: {session.is_busy}")
+
+    # Browser session automatically closed on exit
+    print("Session closed")
+
+
+asyncio.run(main())
+```
+
+This pattern is useful when:
+- A workflow handles complex multi-step setup (login, navigation, form filling)
+- A talent extracts specific data or performs a focused action
+- You need to chain multiple operations that depend on shared browser state
 
 ## Basic Usage
 
 ### Synchronous Client
 
 ```python
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import (
+from witrium import (
+    SyncWitriumClient,
+    WorkflowRunStatus,
     WorkflowRunOptionsSchema, 
     RunWorkflowAndWaitOptionsSchema,
-    WaitUntilStateOptionsSchema
+    WaitUntilStateOptionsSchema,
 )
 
 # Using with context manager (recommended)
@@ -500,10 +600,11 @@ with SyncWitriumClient(api_token="your-api-token") as client:
 
 ```python
 import asyncio
-from witrium import AsyncWitriumClient, WorkflowRunStatus
-from witrium.types import (
+from witrium import (
+    AsyncWitriumClient,
+    WorkflowRunStatus,
     WorkflowRunOptionsSchema,
-    RunWorkflowAndWaitOptionsSchema
+    RunWorkflowAndWaitOptionsSchema,
 )
 
 
@@ -549,8 +650,7 @@ asyncio.run(run_workflow())
 ```python
 import time
 from tqdm import tqdm
-from witrium import SyncWitriumClient, WorkflowRunStatus
-from witrium.types import RunWorkflowAndWaitOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunStatus, RunWorkflowAndWaitOptionsSchema
 
 
 def create_progress_tracker():
@@ -604,7 +704,7 @@ with SyncWitriumClient(api_token="your-api-token") as client:
 ### Using Callbacks for Custom Monitoring
 
 ```python
-from witrium.types import RunWorkflowAndWaitOptionsSchema
+from witrium import RunWorkflowAndWaitOptionsSchema
 
 # Define a custom progress callback
 def monitor_workflow_progress(result):
@@ -647,11 +747,22 @@ with SyncWitriumClient(api_token="your-api-token") as client:
 
 ```python
 SyncWitriumClient(
-    api_token: str,           # API token for authentication
-    timeout: int = 60,        # Request timeout in seconds
-    verify_ssl: bool = True   # Whether to verify SSL certificates
+    api_token: str,                                        # API token for authentication
+    timeout: Optional[float] = None,                       # HTTP request timeout (None = infinite)
+    verify_ssl: bool = True,                               # Whether to verify SSL certificates
+    session_options: Optional[BrowserSessionCreateOptions] = None  # Browser session options
 )
 ```
+
+**Timeout Behavior:**
+- `timeout=None` (default): No timeout - requests never time out
+- `timeout=30.0`: Individual HTTP requests timeout after 30 seconds
+- Applies to all HTTP requests (run_workflow, get_results, etc.)
+
+**Session Options:**
+- When using context manager (`with client:`), a browser session is automatically created
+- `session_options` configures the auto-created session (proxy, provider, use_states)
+- `client.session_id` contains the active session UUID
 
 #### Core Methods
 
@@ -670,19 +781,17 @@ run_workflow(
 
 - `args`: Optional[dict[str, str | int | float]] - Arguments to pass to the workflow
 - `files`: Optional[List[FileUpload]] - Files to upload with the workflow
-- `use_states`: Optional[List[str]] - List of saved state names to restore
+- `use_states`: Optional[List[str]] - List of saved state names to restore (ignored if browser_session_id is set)
 - `preserve_state`: Optional[str] - Name to save the browser state as
 - `no_intelligence`: bool = False - Disable AI assistance
 - `record_session`: bool = False - Record the browser session
-- `keep_session_alive`: bool = False - Keep browser alive after completion
-- `use_existing_session`: Optional[str] - Workflow run ID of existing session to use
+- `browser_session_id`: Optional[str] - Browser session UUID to use (auto-set by context manager)
 
 **Session Management:**
 
-- `preserve_state`: Save the browser state with this name after workflow completion. Other workflows can then restore this state using `use_states`.
-- `use_states`: List of previously saved state names to restore at the start of this workflow.
-- `keep_session_alive`: If True, keeps the browser instance running after workflow completion.
-- `use_existing_session`: Run this workflow in an existing browser session (identified by workflow run ID).
+- `browser_session_id`: UUID of the browser session to use. When using context manager, this is automatically set to `client.session_id`.
+- `preserve_state`: Save the browser state with this name after workflow completion. Other workflows can restore this state using `use_states`.
+- `use_states`: List of previously saved state names to restore. **Note:** This is ignored if `browser_session_id` is provided - the session's use_states takes precedence.
 
 ##### run_talent()
 
@@ -699,10 +808,9 @@ run_talent(
 
 - `args`: Optional[dict[str, Any]] - Arguments to pass to the talent
 - `files`: Optional[List[FileUpload]] - Files to upload with the talent
-- `use_states`: Optional[List[str]] - List of saved state names to restore
+- `use_states`: Optional[List[str]] - List of saved state names to restore (ignored if browser_session_id is set)
 - `preserve_state`: Optional[str] - Name to save the browser state as
-- `keep_session_alive`: bool = False - Keep browser alive after completion
-- `use_existing_session`: Optional[str] - Workflow run ID of existing session to use
+- `browser_session_id`: Optional[str] - Browser session UUID to use (auto-set by context manager)
 
 ##### wait_until_state()
 
@@ -721,13 +829,14 @@ wait_until_state(
 - `all_instructions_executed`: bool = False - Also wait for all executions to complete
 - `min_wait_time`: int = 0 - Minimum seconds to wait before polling starts
 - `polling_interval`: int = 2 - Seconds between polling attempts
-- `timeout`: int = 60 - Maximum seconds to wait
+- `timeout`: Optional[float] = None - Maximum seconds to wait (None = poll forever)
 
 **Key Parameters:**
 
 - `target_status`: Use `WorkflowRunStatus` constants (PENDING, RUNNING, COMPLETED, FAILED, CANCELLED)
 - `all_instructions_executed`: When True, also waits for all individual execution steps to complete
 - `min_wait_time`: Useful for long-running workflows to reduce unnecessary polling
+- `timeout`: Set to `None` (default) to poll forever until workflow reaches target status, or specify a timeout in seconds
 
 ##### run_workflow_and_wait()
 
@@ -745,9 +854,28 @@ run_workflow_and_wait(
 Inherits all fields from `WorkflowRunOptionsSchema`, plus:
 
 - `polling_interval`: int = 5 - Seconds to wait between polling attempts
-- `timeout`: int = 300 - Maximum seconds to poll before timing out
+- `timeout`: Optional[float] = None - Maximum seconds to poll (None = poll forever until completion)
 - `return_intermediate_results`: bool = False - If True, returns list of all polled results
 - `on_progress`: Optional[Callable] - Callback function called with each intermediate result
+
+**Timeout Behavior:**
+- `timeout=None` (default): Polls indefinitely until workflow completes (reaches terminal status)
+- `timeout=300.0`: Raises exception if workflow doesn't complete within 300 seconds
+- Different from HTTP timeout - this controls how long to wait for workflow completion
+
+##### Browser Session Methods
+
+- `create_browser_session(options)`: Create a standalone browser session
+- `list_browser_sessions()`: List all active browser sessions
+- `get_browser_session(session_uuid)`: Get details of a specific browser session
+- `close_browser_session(session_uuid, force=False)`: Close a browser session
+
+**BrowserSessionCreateOptions fields:**
+- `provider`: str = "omega" - Browser provider
+- `use_proxy`: bool = False - Enable proxy
+- `proxy_country`: str = "us" - Proxy country code
+- `proxy_city`: str = "New York" - Proxy city
+- `use_states`: Optional[List[str]] = None - States to restore (applies to all runs using this session)
 
 ##### Other Methods
 
@@ -830,12 +958,11 @@ AgentExecutionStatus.CANCELLED    # "X" - Execution step cancelled
 {
     "args": Optional[dict[str, str | int | float]],
     "files": Optional[List[FileUpload]],
-    "use_states": Optional[List[str]],
+    "use_states": Optional[List[str]],  # Ignored if browser_session_id is set
     "preserve_state": Optional[str],
     "no_intelligence": bool = False,
     "record_session": bool = False,
-    "keep_session_alive": bool = False,
-    "use_existing_session": Optional[str]
+    "browser_session_id": Optional[str]  # Auto-set by context manager
 }
 ```
 
@@ -845,10 +972,9 @@ AgentExecutionStatus.CANCELLED    # "X" - Execution step cancelled
 {
     "args": Optional[dict[str, Any]],
     "files": Optional[List[FileUpload]],
-    "use_states": Optional[List[str]],
+    "use_states": Optional[List[str]],  # Ignored if browser_session_id is set
     "preserve_state": Optional[str],
-    "keep_session_alive": bool = False,
-    "use_existing_session": Optional[str]
+    "browser_session_id": Optional[str]  # Auto-set by context manager
 }
 ```
 
@@ -859,7 +985,7 @@ AgentExecutionStatus.CANCELLED    # "X" - Execution step cancelled
     "all_instructions_executed": bool = False,
     "min_wait_time": int = 0,
     "polling_interval": int = 2,
-    "timeout": int = 60
+    "timeout": Optional[float] = None  # None = poll forever
 }
 ```
 
@@ -871,17 +997,65 @@ Extends WorkflowRunOptionsSchema with additional fields:
 {
     # All WorkflowRunOptionsSchema fields, plus:
     "polling_interval": int = 5,
-    "timeout": int = 300,
+    "timeout": Optional[float] = None,  # None = poll forever
     "return_intermediate_results": bool = False,
     "on_progress": Optional[Callable]
+}
+```
+
+##### BrowserSessionCreateOptions
+
+```python
+{
+    "provider": str = "omega",
+    "use_proxy": bool = False,
+    "proxy_country": str = "us",
+    "proxy_city": str = "New York",
+    "use_states": Optional[List[str]] = None  # Applies to all runs using this session
+}
+```
+
+##### BrowserSessionSchema
+
+```python
+{
+    "uuid": str,
+    "provider": str,
+    "status": str,  # "active" or "closed"
+    "is_busy": bool,
+    "user_managed": bool,
+    "current_run_type": Optional[str],  # "workflow", "talent", or None
+    "current_run_id": Optional[str],
+    "created_at": str,
+    "started_at": Optional[str],
+    "last_activity_at": Optional[str],
+    "proxy_country": Optional[str],
+    "proxy_city": Optional[str]
+}
+```
+
+##### ListBrowserSessionSchema
+
+```python
+{
+    "sessions": List[BrowserSessionSchema],
+    "total_count": int
+}
+```
+
+##### CloseBrowserSessionSchema
+
+```python
+{
+    "status": str,
+    "message": str
 }
 ```
 
 ### Exception Handling
 
 ```python
-from witrium import WitriumClientException
-from witrium.types import RunWorkflowAndWaitOptionsSchema
+from witrium import WitriumClientException, RunWorkflowAndWaitOptionsSchema
 
 try:
     result = client.run_workflow_and_wait(
@@ -901,8 +1075,7 @@ except Exception as e:
 You can cancel a workflow run that is in progress:
 
 ```python
-from witrium import SyncWitriumClient
-from witrium.types import WorkflowRunOptionsSchema
+from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
 
 with SyncWitriumClient(api_token="your-api-token") as client:
     # Start a workflow
@@ -942,34 +1115,31 @@ client.close()  # Easy to forget!
 ### 2. Choose the Right Session Management Pattern
 
 ```python
-from witrium.types import WorkflowRunOptionsSchema
+from witrium import AsyncWitriumClient, WorkflowRunOptionsSchema
+
+# ✅ For most use cases - use managed browser sessions (recommended)
+async with AsyncWitriumClient(api_token="...") as client:
+    # All workflows automatically share the same browser session
+    result1 = await client.run_workflow_and_wait("login-workflow")
+    result2 = await client.run_workflow_and_wait("scrape-workflow")
+    # Session automatically cleaned up
 
 # ✅ For concurrent operations - use state preservation
-for category in categories:
-    client.run_workflow(
-        workflow_id="scraper",
-        options=WorkflowRunOptionsSchema(
-            args={"category": category},
-            use_states=["logged-in-state"]  # Each runs in new browser
-        )
-    )
-
-# ✅ For sequential operations - use session persistence
-login_run_id = client.run_workflow(
-    "login-workflow",
-    options=WorkflowRunOptionsSchema(keep_session_alive=True)
-).run_id
-client.wait_until_state(login_run_id, target_status=WorkflowRunStatus.RUNNING)
-client.run_workflow(
-    "next-workflow",
-    options=WorkflowRunOptionsSchema(use_existing_session=login_run_id)
-)  # Same browser
+    for category in categories:
+        async with AsyncWitriumClient(api_token="...") as client:
+            await client.run_workflow(
+                workflow_id="scraper",
+                options=WorkflowRunOptionsSchema(
+                    args={"category": category},
+                    use_states=["logged-in-state"]  # Each runs in new browser
+                )
+            )
 ```
 
 ### 3. Implement Proper Error Handling
 
 ```python
-from witrium.types import RunWorkflowAndWaitOptionsSchema
+from witrium import RunWorkflowAndWaitOptionsSchema, WitriumClientException
 
 def run_workflow_with_retry(client, workflow_id, args, max_retries=3):
     """Run workflow with retry logic."""
@@ -992,28 +1162,33 @@ def run_workflow_with_retry(client, workflow_id, args, max_retries=3):
 ### 4. Use Appropriate Timeouts
 
 ```python
-from witrium.types import RunWorkflowAndWaitOptionsSchema
+from witrium import AsyncWitriumClient, RunWorkflowAndWaitOptionsSchema
 
-# ✅ Adjust timeouts based on workflow complexity
-quick_results = client.run_workflow_and_wait(
-    workflow_id="simple-data-extraction",
-    options=RunWorkflowAndWaitOptionsSchema(
-        timeout=60  # Simple workflows
-    )
-)
+# ✅ Default: No timeout (polls until completion)
+async with AsyncWitriumClient(api_token="...") as client:
+    result = await client.run_workflow_and_wait("workflow-id")
+    # Polls forever until workflow completes
 
-complex_results = client.run_workflow_and_wait(
-    workflow_id="complex-multi-page-workflow",
-    options=RunWorkflowAndWaitOptionsSchema(
-        timeout=600  # Complex workflows need more time
+# ✅ Set timeout for workflows that should fail fast
+async with AsyncWitriumClient(api_token="...", timeout=30.0) as client:
+    result = await client.run_workflow_and_wait(
+        "simple-workflow",
+        options=RunWorkflowAndWaitOptionsSchema(timeout=60.0)  # Max 60s wait
     )
-)
+
+# ✅ Separate HTTP timeout from polling timeout
+async with AsyncWitriumClient(api_token="...", timeout=10.0) as client:
+    # Each HTTP request times out at 10s
+    result = await client.run_workflow_and_wait(
+        "complex-workflow",
+        options=RunWorkflowAndWaitOptionsSchema(timeout=None)  # Poll forever
+    )
 ```
 
 ### 5. Monitor Progress for Long-Running Workflows
 
 ```python
-from witrium.types import RunWorkflowAndWaitOptionsSchema
+from witrium import AsyncWitriumClient, RunWorkflowAndWaitOptionsSchema
 
 # ✅ Use callbacks for visibility into long-running processes
 def log_progress(result):
@@ -1021,11 +1196,13 @@ def log_progress(result):
     total_steps = len(result.executions)
     logger.info(f"Progress: {completed_steps}/{total_steps} steps completed")
 
-client.run_workflow_and_wait(
-    workflow_id="long-running-workflow",
-    options=RunWorkflowAndWaitOptionsSchema(
-        on_progress=log_progress,
-        polling_interval=10  # Poll less frequently for long workflows
+async with AsyncWitriumClient(api_token="...") as client:
+    result = await client.run_workflow_and_wait(
+        workflow_id="long-running-workflow",
+        options=RunWorkflowAndWaitOptionsSchema(
+            on_progress=log_progress,
+            polling_interval=10,  # Poll less frequently
+            timeout=None  # Poll forever until completion
+        )
     )
-)
 ```

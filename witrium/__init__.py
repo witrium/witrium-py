@@ -9,15 +9,23 @@ from witrium.types import (
     AgentExecutionSchema,
     AgentExecutionStatus,
     WorkflowRunSubmittedSchema,
-    WorkflowRunResultsSchema,
+    WorkflowRunResultSchema,
     WorkflowRunSchema,
     WorkflowRunStatus,
     WorkflowRunExecutionSchema,
     WorkflowSchema,
+    WorkflowRunOptionsSchema,
+    TalentRunOptionsSchema,
     TalentResultSchema,
+    WaitUntilStateOptionsSchema,
+    RunWorkflowAndWaitOptionsSchema,
+    BrowserSessionCreateOptions,
+    BrowserSessionSchema,
+    ListBrowserSessionSchema,
+    CloseBrowserSessionSchema,
 )
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 __all__ = [
     "SyncWitriumClient",
@@ -27,11 +35,19 @@ __all__ = [
     "AgentExecutionSchema",
     "AgentExecutionStatus",
     "WorkflowRunSubmittedSchema",
-    "WorkflowRunResultsSchema",
+    "WorkflowRunResultSchema",
     "WorkflowRunSchema",
     "WorkflowRunStatus",
     "WorkflowRunExecutionSchema",
     "WorkflowSchema",
+    "WorkflowRunOptionsSchema",
+    "TalentRunOptionsSchema",
     "TalentResultSchema",
+    "WaitUntilStateOptionsSchema",
+    "RunWorkflowAndWaitOptionsSchema",
+    "BrowserSessionCreateOptions",
+    "BrowserSessionSchema",
+    "ListBrowserSessionSchema",
+    "CloseBrowserSessionSchema",
     "__version__",
 ]
