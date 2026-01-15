@@ -278,8 +278,8 @@ from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
 with SyncWitriumClient(api_token="your-api-token") as client:
     # Browser session automatically created
     # client.session_id contains the session UUID
-    
-    # Step 1: Run login workflow
+
+    # Step 1: Run login workflow (navigates to login page and authenticates)
     login_response = client.run_workflow_and_wait(
         workflow_id="login-workflow-id",
         options=WorkflowRunOptionsSchema(
@@ -289,20 +289,28 @@ with SyncWitriumClient(api_token="your-api-token") as client:
     print("Login completed")
 
     # Step 2: Run subsequent workflows - they automatically use the same session
+    # Use skip_goto_url_instruction=True since the browser is already on the right page
+    
     # Workflow A: Extract data from dashboard
     dashboard_results = client.run_workflow_and_wait(
         workflow_id="dashboard-scraping-workflow-id",
-        options=WorkflowRunOptionsSchema(args={"report_type": "monthly"})
+        options=WorkflowRunOptionsSchema(
+            args={"report_type": "monthly"},
+            skip_goto_url_instruction=True  # Already on the dashboard after login
+        )
     )
     print(f"Dashboard data: {dashboard_results.result}")
 
     # Workflow B: Update user profile
     profile_results = client.run_workflow_and_wait(
         workflow_id="profile-update-workflow-id",
-        options=WorkflowRunOptionsSchema(args={"new_email": "newemail@example.com"})
+        options=WorkflowRunOptionsSchema(
+            args={"new_email": "newemail@example.com"},
+            skip_goto_url_instruction=True  # Previous workflow left us on the right page
+        )
     )
     print("Profile updated")
-    
+
     # Browser session automatically closed on exit
 ```
 
@@ -395,7 +403,7 @@ for result in results:
         logger.info(f"{result['category']}: {len(result['data'])} items extracted")
 ```
 
-### Example 2: Banking Workflow (Managed Sessions)
+### Example 2: Banking Workflow (Shared Browser Session)
 
 ```python
 from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
@@ -423,11 +431,13 @@ with SyncWitriumClient(api_token="your-api-token") as client:
     logger.info("Secure login completed")
 
     # Step 2: Check account balances
+    # Skip initial navigation - login workflow already brought us to the dashboard
     logger.info("Checking account balances...")
     balance_results = client.run_workflow_and_wait(
         workflow_id="check-balances-workflow",
         options=WorkflowRunOptionsSchema(
-            args={"account_types": ["checking", "savings", "credit"]}
+            args={"account_types": ["checking", "savings", "credit"]},
+            skip_goto_url_instruction=True
         )
     )
     logger.info(f"Account balances retrieved: {balance_results.result}")
@@ -441,7 +451,8 @@ with SyncWitriumClient(api_token="your-api-token") as client:
                 "date_range": "last_30_days",
                 "format": "csv",
                 "accounts": ["checking", "savings"]
-            }
+            },
+            skip_goto_url_instruction=True
         )
     )
     logger.info("Transaction history downloaded")
@@ -454,7 +465,8 @@ with SyncWitriumClient(api_token="your-api-token") as client:
             args={
                 "report_type": "monthly_summary",
                 "include_charts": True
-            }
+            },
+            skip_goto_url_instruction=True
         )
     )
 
@@ -524,10 +536,14 @@ async def main():
         )
         print(f"Talent result: {talent_result.result}")
 
-        # Step 3: Optionally run another workflow using the same session
+        # Step 3: Run another workflow using the same session
+        # Use skip_goto_url_instruction since we're already on the relevant page
         print("Running follow-up workflow...")
         followup_result = await client.run_workflow_and_wait(
-            workflow_id="cleanup-workflow-id"
+            workflow_id="cleanup-workflow-id",
+            options=WorkflowRunOptionsSchema(
+                skip_goto_url_instruction=True  # Browser is already where we need it
+            )
         )
         print(f"Follow-up completed: {followup_result.status}")
 
@@ -786,6 +802,7 @@ run_workflow(
 - `no_intelligence`: bool = False - Disable AI assistance
 - `record_session`: bool = False - Record the browser session
 - `browser_session_id`: Optional[str] - Browser session UUID to use (auto-set by context manager)
+- `skip_goto_url_instruction`: bool = False - Skip the initial URL navigation step (useful when chaining workflows in the same browser session where a previous workflow has already navigated to the relevant page)
 
 **Session Management:**
 
@@ -962,7 +979,8 @@ AgentExecutionStatus.CANCELLED    # "X" - Execution step cancelled
     "preserve_state": Optional[str],
     "no_intelligence": bool = False,
     "record_session": bool = False,
-    "browser_session_id": Optional[str]  # Auto-set by context manager
+    "browser_session_id": Optional[str],  # Auto-set by context manager
+    "skip_goto_url_instruction": bool = False  # Skip initial navigation when chaining workflows
 }
 ```
 
@@ -1117,7 +1135,7 @@ client.close()  # Easy to forget!
 ```python
 from witrium import AsyncWitriumClient, WorkflowRunOptionsSchema
 
-# ✅ For most use cases - use managed browser sessions (recommended)
+# ✅ For most use cases - use a shared browser session (recommended)
 async with AsyncWitriumClient(api_token="...") as client:
     # All workflows automatically share the same browser session
     result1 = await client.run_workflow_and_wait("login-workflow")
