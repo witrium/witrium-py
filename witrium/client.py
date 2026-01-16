@@ -2,8 +2,9 @@ import time
 import asyncio
 import logging
 import httpx
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 from witrium.types import (
+    BrowserSessionCloseOptions,
     WorkflowRunSubmittedSchema,
     WorkflowRunResultSchema,
     WorkflowRunSchema,
@@ -17,7 +18,6 @@ from witrium.types import (
     BrowserSessionCreateOptions,
     BrowserSessionSchema,
     ListBrowserSessionSchema,
-    CloseBrowserSessionSchema,
 )
 
 # Setup logger
@@ -96,7 +96,12 @@ class SyncWitriumClient(WitriumClient):
     def __exit__(self, exc_type, exc_value, traceback):
         if self.session_id:
             try:
-                self.close_browser_session(self.session_id, force=True)
+                self.close_browser_session(
+                    session_id=self.session_id,
+                    options=BrowserSessionCloseOptions(
+                        force=True, preserve_state=self._session_options.preserve_state
+                    ),
+                )
             except Exception:
                 pass  # Best effort cleanup
             self.session_id = None
@@ -524,17 +529,17 @@ class SyncWitriumClient(WitriumClient):
         except Exception as e:
             raise WitriumClientException(f"Error listing browser sessions: {str(e)}")
 
-    def get_browser_session(self, session_uuid: str) -> BrowserSessionSchema:
+    def get_browser_session(self, session_id: str) -> BrowserSessionSchema:
         """
         Get details of a specific browser session.
 
         Args:
-            session_uuid: The UUID of the browser session.
+            session_id: The UUID of the browser session.
 
         Returns:
             BrowserSessionSchema containing session details.
         """
-        url = f"{self.base_url}/v1/browser-sessions/{session_uuid}"
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
 
         try:
             response = self._client.get(url)
@@ -549,26 +554,29 @@ class SyncWitriumClient(WitriumClient):
             raise WitriumClientException(f"Error getting browser session: {str(e)}")
 
     def close_browser_session(
-        self, session_uuid: str, force: bool = False
-    ) -> CloseBrowserSessionSchema:
+        self, session_id: str, options: Optional[BrowserSessionCloseOptions] = None
+    ) -> Dict[str, bool]:
         """
         Close a browser session.
 
         Args:
-            session_uuid: The UUID of the browser session to close.
-            force: If True, force close even if session is in use.
+            session_id: The UUID of the browser session to close.
+            options: Optional browser session close options.
 
         Returns:
-            CloseBrowserSessionResponse containing status and message.
+            Dict containing success status.
         """
-        url = f"{self.base_url}/v1/browser-sessions/{session_uuid}"
-        if force:
-            url += "?force=true"
+
+        if options is None:
+            options = BrowserSessionCloseOptions()
+
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
+        payload = options.model_dump()
 
         try:
-            response = self._client.delete(url)
+            response = self._client.post(url, json=payload)
             response.raise_for_status()
-            return CloseBrowserSessionSchema.model_validate(response.json())
+            return response.json()
         except httpx.HTTPStatusError as e:
             error_detail = self._extract_error_detail(e.response)
             raise WitriumClientException(
@@ -596,7 +604,7 @@ class AsyncWitriumClient(WitriumClient):
             verify_ssl: Whether to verify SSL certificates.
             session_options: Options for automatic browser session creation.
         """
-        super().__init__("https://api.witrium.com", api_token, timeout, verify_ssl)
+        super().__init__("http://localhost:8000", api_token, timeout, verify_ssl)
         self._client = httpx.AsyncClient(
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
@@ -616,7 +624,12 @@ class AsyncWitriumClient(WitriumClient):
     async def __aexit__(self, exc_type, exc_value, traceback):
         if self.session_id:
             try:
-                await self.close_browser_session(self.session_id, force=True)
+                await self.close_browser_session(
+                    session_id=self.session_id,
+                    options=BrowserSessionCloseOptions(
+                        force=True, preserve_state=self._session_options.preserve_state
+                    ),
+                )
             except Exception:
                 pass  # Best effort cleanup
             self.session_id = None
@@ -1044,17 +1057,17 @@ class AsyncWitriumClient(WitriumClient):
         except Exception as e:
             raise WitriumClientException(f"Error listing browser sessions: {str(e)}")
 
-    async def get_browser_session(self, session_uuid: str) -> BrowserSessionSchema:
+    async def get_browser_session(self, session_id: str) -> BrowserSessionSchema:
         """
         Get details of a specific browser session.
 
         Args:
-            session_uuid: The UUID of the browser session.
+            session_id: The UUID of the browser session.
 
         Returns:
             BrowserSessionSchema containing session details.
         """
-        url = f"{self.base_url}/v1/browser-sessions/{session_uuid}"
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
 
         try:
             response = await self._client.get(url)
@@ -1069,26 +1082,28 @@ class AsyncWitriumClient(WitriumClient):
             raise WitriumClientException(f"Error getting browser session: {str(e)}")
 
     async def close_browser_session(
-        self, session_uuid: str, force: bool = False
-    ) -> CloseBrowserSessionSchema:
+        self, session_id: str, options: Optional[BrowserSessionCloseOptions] = None
+    ) -> Dict[str, bool]:
         """
         Close a browser session.
 
         Args:
-            session_uuid: The UUID of the browser session to close.
-            force: If True, force close even if session is in use.
+            session_id: The UUID of the browser session to close.
+            options: Optional browser session close options.
 
         Returns:
-            CloseBrowserSessionResponse containing status and message.
+            Dict containing success status.
         """
-        url = f"{self.base_url}/v1/browser-sessions/{session_uuid}"
-        if force:
-            url += "?force=true"
+        if options is None:
+            options = BrowserSessionCloseOptions()
+
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
+        payload = options.model_dump()
 
         try:
-            response = await self._client.delete(url)
+            response = await self._client.post(url, json=payload)
             response.raise_for_status()
-            return CloseBrowserSessionSchema.model_validate(response.json())
+            return response.json()
         except httpx.HTTPStatusError as e:
             error_detail = await self._extract_error_detail(e.response)
             raise WitriumClientException(

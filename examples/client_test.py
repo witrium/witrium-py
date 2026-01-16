@@ -4,7 +4,11 @@ Simple version - just fill in the values and run.
 """
 
 import asyncio
-from witrium import AsyncWitriumClient, TalentRunOptionsSchema
+from witrium import (
+    AsyncWitriumClient,
+    # BrowserSessionCreateOptions,
+    TalentRunOptionsSchema,
+)
 
 
 async def main():
@@ -16,7 +20,10 @@ async def main():
     print("\n🚀 Testing Browser Session Management\n")
 
     # Test with automatic session management
-    async with AsyncWitriumClient(api_token=API_TOKEN) as client:
+    async with AsyncWitriumClient(
+        api_token=API_TOKEN,
+        # session_options=BrowserSessionCreateOptions(preserve_state="my-saved-state"),
+    ) as client:
         print(f"Session ID: {client.session_id}\n")
 
         # Run workflow - session_id is automatically used

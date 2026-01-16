@@ -216,6 +216,7 @@ class BrowserSessionCreateOptions(BaseModel):
     proxy_country: str = "us"
     proxy_city: str = "New York"
     use_states: Optional[List[str]] = None  # Applies to all runs using this session
+    preserve_state: Optional[str] = None
 
 
 class BrowserSessionSchema(BaseModel):
@@ -238,6 +239,6 @@ class ListBrowserSessionSchema(BaseModel):
     total_count: int
 
 
-class CloseBrowserSessionSchema(BaseModel):
-    status: str
-    message: str
+class BrowserSessionCloseOptions(BaseModel):
+    force: bool = False
+    preserve_state: Optional[str] = None

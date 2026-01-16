@@ -87,7 +87,8 @@ session_opts = BrowserSessionCreateOptions(
     provider="omega",
     use_proxy=True,
     proxy_country="uk",
-    use_states=["my-saved-state"]  # Restore browser state
+    use_states=["my-saved-state"],  # Restore browser state
+    preserve_state="updated-state"  # Save state when session closes
 )
 
 async with AsyncWitriumClient(
@@ -96,6 +97,7 @@ async with AsyncWitriumClient(
 ) as client:
     # Browser session created with UK proxy and restored state
     result = await client.run_workflow("workflow-id")
+    # State will be automatically saved as "updated-state" when exiting context
 ```
 
 ### Manual Session Management
@@ -103,6 +105,13 @@ async with AsyncWitriumClient(
 For advanced use cases, manage browser sessions explicitly:
 
 ```python
+from witrium import (
+    AsyncWitriumClient,
+    BrowserSessionCreateOptions,
+    BrowserSessionCloseOptions,
+    WorkflowRunOptionsSchema
+)
+
 client = AsyncWitriumClient(api_token="...")
 
 # Create a browser session
@@ -125,8 +134,11 @@ result = await client.run_workflow(
     options=WorkflowRunOptionsSchema(browser_session_id=session.uuid)
 )
 
-# Close session when done
-await client.close_browser_session(session.uuid)
+# Close session when done (optionally preserve state). This will override the state name passed at creation time
+await client.close_browser_session(
+    session.uuid,
+    options=BrowserSessionCloseOptions(preserve_state="my-saved-state")
+)
 await client.close()
 ```
 
@@ -156,7 +168,7 @@ If you need different `use_states` for different runs, create separate browser s
 - `create_browser_session(options)` - Create a new browser session
 - `list_browser_sessions()` - List all active sessions
 - `get_browser_session(session_uuid)` - Get session details
-- `close_browser_session(session_uuid, force=False)` - Close a session
+- `close_browser_session(session_uuid, options)` - Close a session
 
 ---
 
@@ -574,6 +586,7 @@ from witrium import (
     WorkflowRunOptionsSchema, 
     RunWorkflowAndWaitOptionsSchema,
     WaitUntilStateOptionsSchema,
+    BrowserSessionCloseOptions,
 )
 
 # Using with context manager (recommended)
@@ -885,7 +898,7 @@ Inherits all fields from `WorkflowRunOptionsSchema`, plus:
 - `create_browser_session(options)`: Create a standalone browser session
 - `list_browser_sessions()`: List all active browser sessions
 - `get_browser_session(session_uuid)`: Get details of a specific browser session
-- `close_browser_session(session_uuid, force=False)`: Close a browser session
+- `close_browser_session(session_uuid, options)`: Close a browser session
 
 **BrowserSessionCreateOptions fields:**
 - `provider`: str = "omega" - Browser provider
@@ -893,6 +906,11 @@ Inherits all fields from `WorkflowRunOptionsSchema`, plus:
 - `proxy_country`: str = "us" - Proxy country code
 - `proxy_city`: str = "New York" - Proxy city
 - `use_states`: Optional[List[str]] = None - States to restore (applies to all runs using this session)
+- `preserve_state`: Optional[str] = None - Name to save the browser state as when the session is closed
+
+**BrowserSessionCloseOptions fields:**
+- `force`: bool = False - Force close the session even if it's busy
+- `preserve_state`: Optional[str] = None - Name to save the browser state as before closing. This will override the state name passed at creation time
 
 ##### Other Methods
 
@@ -1029,7 +1047,8 @@ Extends WorkflowRunOptionsSchema with additional fields:
     "use_proxy": bool = False,
     "proxy_country": str = "us",
     "proxy_city": str = "New York",
-    "use_states": Optional[List[str]] = None  # Applies to all runs using this session
+    "use_states": Optional[List[str]] = None,  # Applies to all runs using this session
+    "preserve_state": Optional[str] = None  # Save browser state with this name when session closes
 }
 ```
 
@@ -1061,12 +1080,12 @@ Extends WorkflowRunOptionsSchema with additional fields:
 }
 ```
 
-##### CloseBrowserSessionSchema
+##### BrowserSessionCloseOptions
 
 ```python
 {
-    "status": str,
-    "message": str
+    "force": bool = False,  # Force close even if session is busy
+    "preserve_state": Optional[str] = None  # Save browser state with this name before closing
 }
 ```
 

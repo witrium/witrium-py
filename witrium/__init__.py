@@ -22,7 +22,7 @@ from witrium.types import (
     BrowserSessionCreateOptions,
     BrowserSessionSchema,
     ListBrowserSessionSchema,
-    CloseBrowserSessionSchema,
+    BrowserSessionCloseOptions,
 )
 
 __version__ = "0.6.0"
@@ -48,6 +48,6 @@ __all__ = [
     "BrowserSessionCreateOptions",
     "BrowserSessionSchema",
     "ListBrowserSessionSchema",
-    "CloseBrowserSessionSchema",
+    "BrowserSessionCloseOptions",
     "__version__",
 ]
