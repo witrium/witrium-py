@@ -24,6 +24,9 @@ from witrium.types import (
 logger = logging.getLogger("witrium_client")
 
 
+DEFAULT_BASE_URL = "https://api.witrium.com"
+
+
 class WitriumClientException(Exception):
     """Base exception for Witrium Client errors."""
 
@@ -38,7 +41,6 @@ class WitriumClient:
 
     def __init__(
         self,
-        base_url: str,
         api_token: str,
         timeout: Optional[float] = None,
         verify_ssl: bool = True,
@@ -46,12 +48,11 @@ class WitriumClient:
         """
         Initialize the Witrium client.
         Args:
-            base_url: The base URL for the API.
             api_token: The API token for authentication.
             timeout: Timeout in seconds for HTTP requests. None means no timeout.
             verify_ssl: Whether to verify SSL certificates.
         """
-        self.base_url = base_url.rstrip("/")
+        self.base_url = DEFAULT_BASE_URL.rstrip("/")
         self.api_token = api_token
         self.timeout = timeout
         self.verify_ssl = verify_ssl
@@ -76,7 +77,7 @@ class SyncWitriumClient(WitriumClient):
             verify_ssl: Whether to verify SSL certificates.
             session_options: Options for automatic browser session creation.
         """
-        super().__init__("https://api.witrium.com", api_token, timeout, verify_ssl)
+        super().__init__(api_token, timeout, verify_ssl)
         self._client = httpx.Client(
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
@@ -604,7 +605,7 @@ class AsyncWitriumClient(WitriumClient):
             verify_ssl: Whether to verify SSL certificates.
             session_options: Options for automatic browser session creation.
         """
-        super().__init__("http://localhost:8000", api_token, timeout, verify_ssl)
+        super().__init__(api_token, timeout, verify_ssl)
         self._client = httpx.AsyncClient(
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
