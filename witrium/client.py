@@ -2,9 +2,9 @@ import time
 import asyncio
 import logging
 import httpx
-from typing import List, Optional, Union
-from tenacity import retry, stop_after_delay, wait_fixed, retry_if_result
+from typing import Dict, List, Optional, Union
 from witrium.types import (
+    BrowserSessionCloseOptions,
     WorkflowRunSubmittedSchema,
     WorkflowRunResultSchema,
     WorkflowRunSchema,
@@ -15,10 +15,16 @@ from witrium.types import (
     TalentRunOptionsSchema,
     WaitUntilStateOptionsSchema,
     RunWorkflowAndWaitOptionsSchema,
+    BrowserSessionCreateOptions,
+    BrowserSessionSchema,
+    ListBrowserSessionSchema,
 )
 
 # Setup logger
 logger = logging.getLogger("witrium_client")
+
+
+DEFAULT_BASE_URL = "https://api.witrium.com"
 
 
 class WitriumClientException(Exception):
@@ -34,14 +40,19 @@ class WitriumClient:
     """
 
     def __init__(
-        self, base_url: str, api_token: str, timeout: int = 60, verify_ssl: bool = True
+        self,
+        api_token: str,
+        timeout: Optional[float] = None,
+        verify_ssl: bool = True,
     ):
         """
         Initialize the Witrium client.
         Args:
             api_token: The API token for authentication.
+            timeout: Timeout in seconds for HTTP requests. None means no timeout.
+            verify_ssl: Whether to verify SSL certificates.
         """
-        self.base_url = base_url.rstrip("/")
+        self.base_url = DEFAULT_BASE_URL.rstrip("/")
         self.api_token = api_token
         self.timeout = timeout
         self.verify_ssl = verify_ssl
@@ -51,12 +62,27 @@ class WitriumClient:
 class SyncWitriumClient(WitriumClient):
     """Synchronous Witrium API client."""
 
-    def __init__(self, api_token: str, timeout: int = 60, verify_ssl: bool = True):
-        """Initialize the synchronous client."""
-        super().__init__("https://api.witrium.com", api_token, timeout, verify_ssl)
+    def __init__(
+        self,
+        api_token: str,
+        timeout: Optional[float] = None,
+        verify_ssl: bool = True,
+        session_options: Optional[BrowserSessionCreateOptions] = None,
+    ):
+        """Initialize the synchronous client.
+
+        Args:
+            api_token: The API token for authentication.
+            timeout: Timeout in seconds for HTTP requests. None means no timeout (infinite).
+            verify_ssl: Whether to verify SSL certificates.
+            session_options: Options for automatic browser session creation.
+        """
+        super().__init__(api_token, timeout, verify_ssl)
         self._client = httpx.Client(
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
+        self._session_options = session_options or BrowserSessionCreateOptions()
+        self.session_id: Optional[str] = None
 
     def close(self):
         """Close the underlying HTTP client."""
@@ -64,9 +90,22 @@ class SyncWitriumClient(WitriumClient):
             self._client.close()
 
     def __enter__(self):
+        session = self.create_browser_session(self._session_options)
+        self.session_id = session.uuid
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        if self.session_id:
+            try:
+                self.close_browser_session(
+                    session_id=self.session_id,
+                    options=BrowserSessionCloseOptions(
+                        force=True, preserve_state=self._session_options.preserve_state
+                    ),
+                )
+            except Exception:
+                pass  # Best effort cleanup
+            self.session_id = None
         self.close()
 
     def run_workflow(
@@ -80,6 +119,9 @@ class SyncWitriumClient(WitriumClient):
         Args:
             workflow_id: The ID of the workflow to run.
             options: Optional workflow run options.
+                If browser_session_id is provided (or client.session_id is set),
+                the use_states from the browser session will be used instead of
+                options.use_states.
 
         Returns:
             Dict containing workflow_id, run_id and status.
@@ -103,10 +145,10 @@ class SyncWitriumClient(WitriumClient):
             payload["no_intelligence"] = options.no_intelligence
         if options.record_session:
             payload["record_session"] = options.record_session
-        if options.keep_session_alive:
-            payload["keep_session_alive"] = options.keep_session_alive
-        if options.use_existing_session is not None:
-            payload["use_existing_session"] = options.use_existing_session
+        # Use client's session_id if available and no explicit session provided
+        browser_session_id = options.browser_session_id or self.session_id
+        if browser_session_id is not None:
+            payload["browser_session_id"] = browser_session_id
 
         try:
             response = self._client.post(url, json=payload)
@@ -141,8 +183,16 @@ class SyncWitriumClient(WitriumClient):
             raise WitriumClientException(
                 f"Error getting workflow results: {error_detail} (Status code: {e.response.status_code})"
             )
+        except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            # Transient network errors - provide a descriptive message
+            error_type = type(e).__name__
+            raise WitriumClientException(
+                f"Network error getting workflow results: {error_type} - connection was interrupted. "
+                "This is usually a transient error, please retry."
+            )
         except Exception as e:
-            raise WitriumClientException(f"Error getting workflow results: {str(e)}")
+            error_msg = str(e) if str(e) else type(e).__name__
+            raise WitriumClientException(f"Error getting workflow results: {error_msg}")
 
     def run_workflow_and_wait(
         self,
@@ -173,18 +223,52 @@ class SyncWitriumClient(WitriumClient):
                 preserve_state=options.preserve_state,
                 no_intelligence=options.no_intelligence,
                 record_session=options.record_session,
-                keep_session_alive=options.keep_session_alive,
-                use_existing_session=options.use_existing_session,
+                browser_session_id=options.browser_session_id,
             ),
         )
 
         run_id = run_response.run_id
         start_time = time.time()
         intermediate_results = []
+        consecutive_errors = 0
+        max_consecutive_errors = 3
 
         # Poll for results
-        while time.time() - start_time < options.timeout:
-            results = self.get_workflow_results(run_id)
+        while True:
+            # Check timeout if specified
+            if (
+                options.timeout is not None
+                and time.time() - start_time >= options.timeout
+            ):
+                raise WitriumClientException(
+                    f"Workflow execution timed out after {options.timeout} seconds"
+                )
+
+            try:
+                results = self.get_workflow_results(run_id)
+                consecutive_errors = 0  # Reset on success
+            except WitriumClientException as e:
+                # Check if this is a transient network error (retry-able)
+                if "Network error" in str(e) or "connection was interrupted" in str(e):
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise WitriumClientException(
+                            f"Failed to get workflow results after {max_consecutive_errors} "
+                            f"consecutive network errors: {str(e)}"
+                        )
+                    # Exponential backoff: wait longer after each error
+                    backoff_time = options.polling_interval * (
+                        2 ** (consecutive_errors - 1)
+                    )
+                    logger.warning(
+                        f"Transient error polling workflow results (attempt {consecutive_errors}/{max_consecutive_errors}), "
+                        f"retrying in {backoff_time}s: {str(e)}"
+                    )
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    # Non-transient error, re-raise immediately
+                    raise
 
             # Store intermediate results if requested
             if options.return_intermediate_results:
@@ -204,10 +288,6 @@ class SyncWitriumClient(WitriumClient):
 
             # Wait before polling again
             time.sleep(options.polling_interval)
-
-        raise WitriumClientException(
-            f"Workflow execution timed out after {options.timeout} seconds"
-        )
 
     def wait_until_state(
         self,
@@ -242,38 +322,50 @@ class SyncWitriumClient(WitriumClient):
                 return False
             return results.executions[-1].status == AgentExecutionStatus.COMPLETED
 
-        def _should_continue_polling(results: WorkflowRunResultSchema) -> bool:
-            """Determine if we should continue polling based on target status and execution completion."""
-            status_not_reached = results.status != target_status
-            terminal_status_reached = (
-                results.status in WorkflowRunStatus.TERMINAL_STATUSES
-            )
+        start_time = time.time()
+        consecutive_errors = 0
+        max_consecutive_errors = 3
 
-            # If we've reached a terminal status but it's not our target, stop retrying
-            if terminal_status_reached and status_not_reached:
-                return False
-
-            # If target status is not reached, continue polling
-            if status_not_reached:
-                return True
-
-            # If target status is reached but we also need all instructions executed
+        # Poll until conditions are met
+        while True:
+            # Check timeout if specified
             if (
-                options.all_instructions_executed
-                and not _check_all_executions_completed(results)
+                options.timeout is not None
+                and time.time() - start_time >= options.timeout
             ):
-                return True
+                target_status_name = WorkflowRunStatus.get_status_name(target_status)
+                condition_msg = f"status '{target_status_name}'"
+                if options.all_instructions_executed:
+                    condition_msg += " and all instructions executed"
+                raise WitriumClientException(
+                    f"Workflow run did not reach {condition_msg} within {options.timeout} seconds"
+                )
 
-            # All conditions met, stop polling
-            return False
-
-        @retry(
-            stop=stop_after_delay(options.timeout),
-            wait=wait_fixed(options.polling_interval),
-            retry=retry_if_result(_should_continue_polling),
-        )
-        def _poll_for_status():
-            results = self.get_workflow_results(run_id)
+            try:
+                results = self.get_workflow_results(run_id)
+                consecutive_errors = 0  # Reset on success
+            except WitriumClientException as e:
+                # Check if this is a transient network error (retry-able)
+                if "Network error" in str(e) or "connection was interrupted" in str(e):
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise WitriumClientException(
+                            f"Failed to get workflow results after {max_consecutive_errors} "
+                            f"consecutive network errors: {str(e)}"
+                        )
+                    # Exponential backoff: wait longer after each error
+                    backoff_time = options.polling_interval * (
+                        2 ** (consecutive_errors - 1)
+                    )
+                    logger.warning(
+                        f"Transient error polling workflow results (attempt {consecutive_errors}/{max_consecutive_errors}), "
+                        f"retrying in {backoff_time}s: {str(e)}"
+                    )
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    # Non-transient error, re-raise immediately
+                    raise
 
             # Check if workflow has reached the target status
             status_reached = results.status == target_status
@@ -297,21 +389,8 @@ class SyncWitriumClient(WitriumClient):
                     f"Workflow run reached terminal status '{current_status_name}' before reaching target status '{target_status_name}'"
                 )
 
-            # Return results for retry evaluation
-            return results
-
-        try:
-            return _poll_for_status()
-        except Exception as e:
-            if "retry" in str(e).lower():
-                target_status_name = WorkflowRunStatus.get_status_name(target_status)
-                condition_msg = f"status '{target_status_name}'"
-                if options.all_instructions_executed:
-                    condition_msg += " and all instructions executed"
-                raise WitriumClientException(
-                    f"Workflow run did not reach {condition_msg} within {options.timeout} seconds"
-                )
-            raise
+            # Wait before polling again
+            time.sleep(options.polling_interval)
 
     def cancel_run(self, run_id: str) -> WorkflowRunSchema:
         """
@@ -358,6 +437,9 @@ class SyncWitriumClient(WitriumClient):
         Args:
             talent_id: The ID of the talent to run.
             options: Optional talent run options.
+                If browser_session_id is provided (or client.session_id is set),
+                the use_states from the browser session will be used instead of
+                options.use_states.
 
         Returns:
             The result of the talent run.
@@ -377,10 +459,10 @@ class SyncWitriumClient(WitriumClient):
             payload["use_states"] = options.use_states
         if options.preserve_state is not None:
             payload["preserve_state"] = options.preserve_state
-        if options.keep_session_alive:
-            payload["keep_session_alive"] = options.keep_session_alive
-        if options.use_existing_session is not None:
-            payload["use_existing_session"] = options.use_existing_session
+        # Use client's session_id if available and no explicit session provided
+        browser_session_id = options.browser_session_id or self.session_id
+        if browser_session_id is not None:
+            payload["browser_session_id"] = browser_session_id
 
         try:
             response = self._client.post(url, json=payload)
@@ -394,16 +476,141 @@ class SyncWitriumClient(WitriumClient):
         except Exception as e:
             raise WitriumClientException(f"Error running talent: {str(e)}")
 
+    def create_browser_session(
+        self, options: Optional[BrowserSessionCreateOptions] = None
+    ) -> BrowserSessionSchema:
+        """
+        Create a standalone browser session.
+
+        Args:
+            options: Optional browser session creation options.
+                The use_states set here will apply to all workflow and talent runs
+                that use this browser session. Individual run options' use_states
+                will be ignored when using this session.
+
+        Returns:
+            BrowserSessionSchema containing session details.
+        """
+        if options is None:
+            options = BrowserSessionCreateOptions()
+
+        url = f"{self.base_url}/v1/browser-sessions"
+        payload = options.model_dump()
+
+        try:
+            response = self._client.post(url, json=payload)
+            response.raise_for_status()
+            return BrowserSessionSchema.model_validate(response.json())
+        except httpx.HTTPStatusError as e:
+            error_detail = self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error creating browser session: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error creating browser session: {str(e)}")
+
+    def list_browser_sessions(self) -> ListBrowserSessionSchema:
+        """
+        List all active browser sessions.
+
+        Returns:
+            BrowserSessionListResponse containing list of sessions and total count.
+        """
+        url = f"{self.base_url}/v1/browser-sessions"
+
+        try:
+            response = self._client.get(url)
+            response.raise_for_status()
+            return ListBrowserSessionSchema.model_validate(response.json())
+        except httpx.HTTPStatusError as e:
+            error_detail = self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error listing browser sessions: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error listing browser sessions: {str(e)}")
+
+    def get_browser_session(self, session_id: str) -> BrowserSessionSchema:
+        """
+        Get details of a specific browser session.
+
+        Args:
+            session_id: The UUID of the browser session.
+
+        Returns:
+            BrowserSessionSchema containing session details.
+        """
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
+
+        try:
+            response = self._client.get(url)
+            response.raise_for_status()
+            return BrowserSessionSchema.model_validate(response.json())
+        except httpx.HTTPStatusError as e:
+            error_detail = self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error getting browser session: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error getting browser session: {str(e)}")
+
+    def close_browser_session(
+        self, session_id: str, options: Optional[BrowserSessionCloseOptions] = None
+    ) -> Dict[str, bool]:
+        """
+        Close a browser session.
+
+        Args:
+            session_id: The UUID of the browser session to close.
+            options: Optional browser session close options.
+
+        Returns:
+            Dict containing success status.
+        """
+
+        if options is None:
+            options = BrowserSessionCloseOptions()
+
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
+        payload = options.model_dump()
+
+        try:
+            response = self._client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            error_detail = self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error closing browser session: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error closing browser session: {str(e)}")
+
 
 class AsyncWitriumClient(WitriumClient):
     """Asynchronous Witrium API client."""
 
-    def __init__(self, api_token: str, timeout: int = 60, verify_ssl: bool = True):
-        """Initialize the asynchronous client."""
-        super().__init__("https://api.witrium.com", api_token, timeout, verify_ssl)
+    def __init__(
+        self,
+        api_token: str,
+        timeout: Optional[float] = None,
+        verify_ssl: bool = True,
+        session_options: Optional[BrowserSessionCreateOptions] = None,
+    ):
+        """Initialize the asynchronous client.
+
+        Args:
+            api_token: The API token for authentication.
+            timeout: Timeout in seconds for HTTP requests. None means no timeout (infinite).
+            verify_ssl: Whether to verify SSL certificates.
+            session_options: Options for automatic browser session creation.
+        """
+        super().__init__(api_token, timeout, verify_ssl)
         self._client = httpx.AsyncClient(
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
+        self._session_options = session_options or BrowserSessionCreateOptions()
+        self.session_id: Optional[str] = None
 
     async def close(self):
         """Close the underlying HTTP client."""
@@ -411,9 +618,22 @@ class AsyncWitriumClient(WitriumClient):
             await self._client.aclose()
 
     async def __aenter__(self):
+        session = await self.create_browser_session(self._session_options)
+        self.session_id = session.uuid
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
+        if self.session_id:
+            try:
+                await self.close_browser_session(
+                    session_id=self.session_id,
+                    options=BrowserSessionCloseOptions(
+                        force=True, preserve_state=self._session_options.preserve_state
+                    ),
+                )
+            except Exception:
+                pass  # Best effort cleanup
+            self.session_id = None
         await self.close()
 
     async def run_workflow(
@@ -427,6 +647,9 @@ class AsyncWitriumClient(WitriumClient):
         Args:
             workflow_id: The ID of the workflow to run.
             options: Optional workflow run options.
+                If browser_session_id is provided (or client.session_id is set),
+                the use_states from the browser session will be used instead of
+                options.use_states.
 
         Returns:
             Dict containing workflow_id, run_id and status.
@@ -450,10 +673,10 @@ class AsyncWitriumClient(WitriumClient):
             payload["no_intelligence"] = options.no_intelligence
         if options.record_session:
             payload["record_session"] = options.record_session
-        if options.keep_session_alive:
-            payload["keep_session_alive"] = options.keep_session_alive
-        if options.use_existing_session is not None:
-            payload["use_existing_session"] = options.use_existing_session
+        # Use client's session_id if available and no explicit session provided
+        browser_session_id = options.browser_session_id or self.session_id
+        if browser_session_id is not None:
+            payload["browser_session_id"] = browser_session_id
 
         try:
             response = await self._client.post(url, json=payload)
@@ -488,8 +711,16 @@ class AsyncWitriumClient(WitriumClient):
             raise WitriumClientException(
                 f"Error getting workflow results: {error_detail} (Status code: {e.response.status_code})"
             )
+        except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            # Transient network errors - provide a descriptive message
+            error_type = type(e).__name__
+            raise WitriumClientException(
+                f"Network error getting workflow results: {error_type} - connection was interrupted. "
+                "This is usually a transient error, please retry."
+            )
         except Exception as e:
-            raise WitriumClientException(f"Error getting workflow results: {str(e)}")
+            error_msg = str(e) if str(e) else type(e).__name__
+            raise WitriumClientException(f"Error getting workflow results: {error_msg}")
 
     async def run_workflow_and_wait(
         self,
@@ -520,18 +751,52 @@ class AsyncWitriumClient(WitriumClient):
                 preserve_state=options.preserve_state,
                 no_intelligence=options.no_intelligence,
                 record_session=options.record_session,
-                keep_session_alive=options.keep_session_alive,
-                use_existing_session=options.use_existing_session,
+                browser_session_id=options.browser_session_id,
             ),
         )
 
         run_id = run_response.run_id
         start_time = time.time()
         intermediate_results = []
+        consecutive_errors = 0
+        max_consecutive_errors = 3
 
         # Poll for results
-        while time.time() - start_time < options.timeout:
-            results = await self.get_workflow_results(run_id)
+        while True:
+            # Check timeout if specified
+            if (
+                options.timeout is not None
+                and time.time() - start_time >= options.timeout
+            ):
+                raise WitriumClientException(
+                    f"Workflow execution timed out after {options.timeout} seconds"
+                )
+
+            try:
+                results = await self.get_workflow_results(run_id)
+                consecutive_errors = 0  # Reset on success
+            except WitriumClientException as e:
+                # Check if this is a transient network error (retry-able)
+                if "Network error" in str(e) or "connection was interrupted" in str(e):
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise WitriumClientException(
+                            f"Failed to get workflow results after {max_consecutive_errors} "
+                            f"consecutive network errors: {str(e)}"
+                        )
+                    # Exponential backoff: wait longer after each error
+                    backoff_time = options.polling_interval * (
+                        2 ** (consecutive_errors - 1)
+                    )
+                    logger.warning(
+                        f"Transient error polling workflow results (attempt {consecutive_errors}/{max_consecutive_errors}), "
+                        f"retrying in {backoff_time}s: {str(e)}"
+                    )
+                    await asyncio.sleep(backoff_time)
+                    continue
+                else:
+                    # Non-transient error, re-raise immediately
+                    raise
 
             # Store intermediate results if requested
             if options.return_intermediate_results:
@@ -551,10 +816,6 @@ class AsyncWitriumClient(WitriumClient):
 
             # Wait before polling again
             await asyncio.sleep(options.polling_interval)
-
-        raise WitriumClientException(
-            f"Workflow execution timed out after {options.timeout} seconds"
-        )
 
     async def wait_until_state(
         self,
@@ -589,38 +850,50 @@ class AsyncWitriumClient(WitriumClient):
                 return False
             return results.executions[-1].status == AgentExecutionStatus.COMPLETED
 
-        def _should_continue_polling(results: WorkflowRunResultSchema) -> bool:
-            """Determine if we should continue polling based on target status and execution completion."""
-            status_not_reached = results.status != target_status
-            terminal_status_reached = (
-                results.status in WorkflowRunStatus.TERMINAL_STATUSES
-            )
+        start_time = time.time()
+        consecutive_errors = 0
+        max_consecutive_errors = 3
 
-            # If we've reached a terminal status but it's not our target, stop retrying
-            if terminal_status_reached and status_not_reached:
-                return False
-
-            # If target status is not reached, continue polling
-            if status_not_reached:
-                return True
-
-            # If target status is reached but we also need all instructions executed
+        # Poll until conditions are met
+        while True:
+            # Check timeout if specified
             if (
-                options.all_instructions_executed
-                and not _check_all_executions_completed(results)
+                options.timeout is not None
+                and time.time() - start_time >= options.timeout
             ):
-                return True
+                target_status_name = WorkflowRunStatus.get_status_name(target_status)
+                condition_msg = f"status '{target_status_name}'"
+                if options.all_instructions_executed:
+                    condition_msg += " and all instructions executed"
+                raise WitriumClientException(
+                    f"Workflow run did not reach {condition_msg} within {options.timeout} seconds"
+                )
 
-            # All conditions met, stop polling
-            return False
-
-        @retry(
-            stop=stop_after_delay(options.timeout),
-            wait=wait_fixed(options.polling_interval),
-            retry=retry_if_result(_should_continue_polling),
-        )
-        async def _poll_for_status():
-            results = await self.get_workflow_results(run_id)
+            try:
+                results = await self.get_workflow_results(run_id)
+                consecutive_errors = 0  # Reset on success
+            except WitriumClientException as e:
+                # Check if this is a transient network error (retry-able)
+                if "Network error" in str(e) or "connection was interrupted" in str(e):
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise WitriumClientException(
+                            f"Failed to get workflow results after {max_consecutive_errors} "
+                            f"consecutive network errors: {str(e)}"
+                        )
+                    # Exponential backoff: wait longer after each error
+                    backoff_time = options.polling_interval * (
+                        2 ** (consecutive_errors - 1)
+                    )
+                    logger.warning(
+                        f"Transient error polling workflow results (attempt {consecutive_errors}/{max_consecutive_errors}), "
+                        f"retrying in {backoff_time}s: {str(e)}"
+                    )
+                    await asyncio.sleep(backoff_time)
+                    continue
+                else:
+                    # Non-transient error, re-raise immediately
+                    raise
 
             # Check if workflow has reached the target status
             status_reached = results.status == target_status
@@ -644,21 +917,8 @@ class AsyncWitriumClient(WitriumClient):
                     f"Workflow run reached terminal status '{current_status_name}' before reaching target status '{target_status_name}'"
                 )
 
-            # Return results for retry evaluation
-            return results
-
-        try:
-            return await _poll_for_status()
-        except Exception as e:
-            if "retry" in str(e).lower():
-                target_status_name = WorkflowRunStatus.get_status_name(target_status)
-                condition_msg = f"status '{target_status_name}'"
-                if options.all_instructions_executed:
-                    condition_msg += " and all instructions executed"
-                raise WitriumClientException(
-                    f"Workflow run did not reach {condition_msg} within {options.timeout} seconds"
-                )
-            raise
+            # Wait before polling again
+            await asyncio.sleep(options.polling_interval)
 
     async def cancel_run(self, run_id: str) -> WorkflowRunSchema:
         """
@@ -705,6 +965,9 @@ class AsyncWitriumClient(WitriumClient):
         Args:
             talent_id: The ID of the talent to run.
             options: Optional talent run options.
+                If browser_session_id is provided (or client.session_id is set),
+                the use_states from the browser session will be used instead of
+                options.use_states.
 
         Returns:
             The result of the talent run.
@@ -724,10 +987,10 @@ class AsyncWitriumClient(WitriumClient):
             payload["use_states"] = options.use_states
         if options.preserve_state is not None:
             payload["preserve_state"] = options.preserve_state
-        if options.keep_session_alive:
-            payload["keep_session_alive"] = options.keep_session_alive
-        if options.use_existing_session is not None:
-            payload["use_existing_session"] = options.use_existing_session
+        # Use client's session_id if available and no explicit session provided
+        browser_session_id = options.browser_session_id or self.session_id
+        if browser_session_id is not None:
+            payload["browser_session_id"] = browser_session_id
 
         try:
             response = await self._client.post(url, json=payload)
@@ -740,3 +1003,112 @@ class AsyncWitriumClient(WitriumClient):
             )
         except Exception as e:
             raise WitriumClientException(f"Error running talent: {str(e)}")
+
+    async def create_browser_session(
+        self, options: Optional[BrowserSessionCreateOptions] = None
+    ) -> BrowserSessionSchema:
+        """
+        Create a standalone browser session.
+
+        Args:
+            options: Optional browser session creation options.
+                The use_states set here will apply to all workflow and talent runs
+                that use this browser session. Individual run options' use_states
+                will be ignored when using this session.
+
+        Returns:
+            BrowserSessionSchema containing session details.
+        """
+        if options is None:
+            options = BrowserSessionCreateOptions()
+
+        url = f"{self.base_url}/v1/browser-sessions"
+        payload = options.model_dump()
+
+        try:
+            response = await self._client.post(url, json=payload)
+            response.raise_for_status()
+            return BrowserSessionSchema.model_validate(response.json())
+        except httpx.HTTPStatusError as e:
+            error_detail = await self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error creating browser session: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error creating browser session: {str(e)}")
+
+    async def list_browser_sessions(self) -> ListBrowserSessionSchema:
+        """
+        List all active browser sessions.
+
+        Returns:
+            BrowserSessionListResponse containing list of sessions and total count.
+        """
+        url = f"{self.base_url}/v1/browser-sessions"
+
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return ListBrowserSessionSchema.model_validate(response.json())
+        except httpx.HTTPStatusError as e:
+            error_detail = await self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error listing browser sessions: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error listing browser sessions: {str(e)}")
+
+    async def get_browser_session(self, session_id: str) -> BrowserSessionSchema:
+        """
+        Get details of a specific browser session.
+
+        Args:
+            session_id: The UUID of the browser session.
+
+        Returns:
+            BrowserSessionSchema containing session details.
+        """
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
+
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return BrowserSessionSchema.model_validate(response.json())
+        except httpx.HTTPStatusError as e:
+            error_detail = await self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error getting browser session: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error getting browser session: {str(e)}")
+
+    async def close_browser_session(
+        self, session_id: str, options: Optional[BrowserSessionCloseOptions] = None
+    ) -> Dict[str, bool]:
+        """
+        Close a browser session.
+
+        Args:
+            session_id: The UUID of the browser session to close.
+            options: Optional browser session close options.
+
+        Returns:
+            Dict containing success status.
+        """
+        if options is None:
+            options = BrowserSessionCloseOptions()
+
+        url = f"{self.base_url}/v1/browser-sessions/{session_id}"
+        payload = options.model_dump()
+
+        try:
+            response = await self._client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            error_detail = await self._extract_error_detail(e.response)
+            raise WitriumClientException(
+                f"Error closing browser session: {error_detail} (Status code: {e.response.status_code})"
+            )
+        except Exception as e:
+            raise WitriumClientException(f"Error closing browser session: {str(e)}")
