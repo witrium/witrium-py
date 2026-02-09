@@ -489,7 +489,7 @@ class SyncWitriumClient(WitriumClient):
                 will be ignored when using this session.
 
         Returns:
-            BrowserSessionSchema containing session details.
+            BrowserSessionSchema containing session details in running state.
         """
         if options is None:
             options = BrowserSessionCreateOptions()
@@ -500,7 +500,7 @@ class SyncWitriumClient(WitriumClient):
         try:
             response = self._client.post(url, json=payload)
             response.raise_for_status()
-            return BrowserSessionSchema.model_validate(response.json())
+            session = BrowserSessionSchema.model_validate(response.json())
         except httpx.HTTPStatusError as e:
             error_detail = self._extract_error_detail(e.response)
             raise WitriumClientException(
@@ -508,6 +508,44 @@ class SyncWitriumClient(WitriumClient):
             )
         except Exception as e:
             raise WitriumClientException(f"Error creating browser session: {str(e)}")
+
+        # Poll for browser session to reach running state
+        if session.status == "P":
+            polling_timeout = 3 * 60 * 60  # 3 hours in seconds
+            polling_interval = 3.0  # 3 seconds
+            start_time = time.time()
+
+            while True:
+                # Check timeout
+                if time.time() - start_time >= polling_timeout:
+                    raise WitriumClientException(
+                        f"Browser session creation timed out after {polling_timeout} seconds. "
+                        f"Session ID: {session.uuid}"
+                    )
+
+                try:
+                    session = self.get_browser_session(session.uuid)
+                except WitriumClientException as e:
+                    # If get fails, wait and retry
+                    logger.warning(f"Error polling browser session status: {str(e)}")
+                    time.sleep(polling_interval)
+                    continue
+
+                # Check if session is running
+                if session.status == "R":
+                    break
+
+                # Check if session reached a terminal state
+                if session.status in ["C", "X", "F"]:
+                    raise WitriumClientException(
+                        f"Browser session reached terminal state '{session.status}' before running. "
+                        f"Session ID: {session.uuid}"
+                    )
+
+                # Wait before polling again
+                time.sleep(polling_interval)
+
+        return session
 
     def list_browser_sessions(self) -> ListBrowserSessionSchema:
         """
@@ -1017,7 +1055,7 @@ class AsyncWitriumClient(WitriumClient):
                 will be ignored when using this session.
 
         Returns:
-            BrowserSessionSchema containing session details.
+            BrowserSessionSchema containing session details in running state.
         """
         if options is None:
             options = BrowserSessionCreateOptions()
@@ -1028,7 +1066,7 @@ class AsyncWitriumClient(WitriumClient):
         try:
             response = await self._client.post(url, json=payload)
             response.raise_for_status()
-            return BrowserSessionSchema.model_validate(response.json())
+            session = BrowserSessionSchema.model_validate(response.json())
         except httpx.HTTPStatusError as e:
             error_detail = await self._extract_error_detail(e.response)
             raise WitriumClientException(
@@ -1036,6 +1074,44 @@ class AsyncWitriumClient(WitriumClient):
             )
         except Exception as e:
             raise WitriumClientException(f"Error creating browser session: {str(e)}")
+
+        # Poll for browser session to reach running state
+        if session.status == "P":
+            polling_timeout = 3 * 60 * 60  # 3 hours in seconds
+            polling_interval = 3.0  # 3 seconds
+            start_time = time.time()
+
+            while True:
+                # Check timeout
+                if time.time() - start_time >= polling_timeout:
+                    raise WitriumClientException(
+                        f"Browser session creation timed out after {polling_timeout} seconds. "
+                        f"Session ID: {session.uuid}"
+                    )
+
+                try:
+                    session = await self.get_browser_session(session.uuid)
+                except WitriumClientException as e:
+                    # If get fails, wait and retry
+                    logger.warning(f"Error polling browser session status: {str(e)}")
+                    await asyncio.sleep(polling_interval)
+                    continue
+
+                # Check if session is running
+                if session.status == "R":
+                    break
+
+                # Check if session reached a terminal state
+                if session.status in ["C", "X", "F"]:
+                    raise WitriumClientException(
+                        f"Browser session reached terminal state '{session.status}' before running. "
+                        f"Session ID: {session.uuid}"
+                    )
+
+                # Wait before polling again
+                await asyncio.sleep(polling_interval)
+
+        return session
 
     async def list_browser_sessions(self) -> ListBrowserSessionSchema:
         """

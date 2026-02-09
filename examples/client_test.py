@@ -6,8 +6,8 @@ Simple version - just fill in the values and run.
 import asyncio
 from witrium import (
     AsyncWitriumClient,
-    # BrowserSessionCreateOptions,
     TalentRunOptionsSchema,
+    RunWorkflowAndWaitOptionsSchema,
 )
 
 
@@ -16,6 +16,7 @@ async def main():
     API_TOKEN = "<API_TOKEN>"
     WORKFLOW_ID = "<WORKFLOW_ID>"
     TALENT_ID = "<TALENT_ID>"
+    ARGUMENT = "<ARGUMENT>"
 
     print("\n🚀 Testing Browser Session Management\n")
 
@@ -28,14 +29,19 @@ async def main():
 
         # Run workflow - session_id is automatically used
         print(f"Running workflow: {WORKFLOW_ID}")
-        result = await client.run_workflow_and_wait(WORKFLOW_ID)
+        result = await client.run_workflow_and_wait(
+            WORKFLOW_ID,
+            options=RunWorkflowAndWaitOptionsSchema(
+                args={"url": f"https://www.amazon.com/dp/{ARGUMENT}"}
+            ),
+        )
         print(f"  ✓ Workflow run_id: {result.run_id}")
         print(f"  ✓ Status: {result.status}\n")
 
         # Run talent - session_id is automatically used
         print(f"Running talent: {TALENT_ID}")
         result2 = await client.run_talent(
-            TALENT_ID, options=TalentRunOptionsSchema(args={"asin": "B08QZMJBFR"})
+            TALENT_ID, options=TalentRunOptionsSchema(args={"asin": ARGUMENT})
         )
         print(f"  ✓ Status: {result2}\n")
 
