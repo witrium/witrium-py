@@ -66,7 +66,8 @@ When you use the context manager, a browser session is automatically created whe
 from witrium import AsyncWitriumClient
 
 async with AsyncWitriumClient(api_token="...") as client:
-    # Browser session automatically created
+    # Browser session automatically created and waits until running state
+    # This may take a few seconds as the browser instance is being provisioned
     print(f"Session ID: {client.session_id}")
     
     # All workflows automatically use this session
@@ -75,6 +76,8 @@ async with AsyncWitriumClient(api_token="...") as client:
     
     # Session automatically closed on exit
 ```
+
+**Note:** When creating a browser session, the client automatically waits (with a 3-hour timeout) for the session to reach running state before proceeding. This ensures the browser is fully provisioned and ready to execute workflows.
 
 ### Custom Session Options
 
@@ -114,11 +117,12 @@ from witrium import (
 
 client = AsyncWitriumClient(api_token="...")
 
-# Create a browser session
+# Create a browser session. This method blocks until the browser session reaches the running state, which may take some time depending on your concurrency limits and well as the time it takes to provision the browser instance in the cloud.
 session = await client.create_browser_session(
     BrowserSessionCreateOptions(use_proxy=True)
 )
 print(f"Created session: {session.uuid}")
+print(f"Session status: {session.status}")  # Will be "R" (running)
 
 # List all active sessions
 sessions = await client.list_browser_sessions()
@@ -126,7 +130,7 @@ print(f"Active sessions: {sessions.total_count}")
 
 # Get session details
 details = await client.get_browser_session(session.uuid)
-print(f"Session status: {details.status}")
+print(f"Session status: {details.status}")  # "P" (pending), "R" (running), "C" (completed), or "X" (cancelled)
 
 # Use session explicitly
 result = await client.run_workflow(
@@ -165,10 +169,13 @@ If you need different `use_states` for different runs, create separate browser s
 
 ### Available Browser Session Methods
 
-- `create_browser_session(options)` - Create a new browser session
+- `create_browser_session(options)` - Create a new browser session and wait for it to reach running state (with 3-hour timeout)
 - `list_browser_sessions()` - List all active sessions
 - `get_browser_session(session_uuid)` - Get session details
 - `close_browser_session(session_uuid, options)` - Close a session
+
+**Browser Session Lifecycle:**
+When you create a browser session, it initially enters a "pending" state while the browser instance is being provisioned. The `create_browser_session()` method automatically polls (with a 3-hour timeout) until the session reaches "running" state, ensuring it's ready for use before returning.
 
 ---
 
@@ -1058,7 +1065,7 @@ Extends WorkflowRunOptionsSchema with additional fields:
 {
     "uuid": str,
     "provider": str,
-    "status": str,  # "active" or "closed"
+    "status": str,  # "P" (pending), "R" (running), "C" (completed), or "X" (cancelled)
     "is_busy": bool,
     "user_managed": bool,
     "current_run_type": Optional[str],  # "workflow", "talent", or None
@@ -1070,6 +1077,12 @@ Extends WorkflowRunOptionsSchema with additional fields:
     "proxy_city": Optional[str]
 }
 ```
+
+**Browser Session Status Values:**
+- `"P"` - Pending: Session is being provisioned (browser instance starting up)
+- `"R"` - Running: Session is active and ready to execute workflows/talents
+- `"C"` - Completed: Session has finished and been closed normally
+- `"X"` - Cancelled: Session was cancelled before completion
 
 ##### ListBrowserSessionSchema
 
