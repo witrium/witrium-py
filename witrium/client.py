@@ -24,7 +24,7 @@ from witrium.types import (
 logger = logging.getLogger("witrium_client")
 
 
-DEFAULT_BASE_URL = "http://localhost:8000"
+DEFAULT_BASE_URL = "https://api.witrium.com"
 
 
 class WitriumClientException(Exception):
