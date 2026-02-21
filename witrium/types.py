@@ -221,17 +221,11 @@ class BrowserSessionCreateOptions(BaseModel):
 
 class BrowserSessionSchema(BaseModel):
     uuid: str
-    provider: str
-    status: str  # "active" or "closed"
-    is_busy: bool
+    status: str  # "pending", "running", "completed", or "cancelled"
     user_managed: bool
-    current_run_type: Optional[str] = None  # "workflow", "talent", or None
-    current_run_id: Optional[str] = None
-    created_at: str
     started_at: Optional[str] = None
-    last_activity_at: Optional[str] = None
-    proxy_country: Optional[str] = None
-    proxy_city: Optional[str] = None
+    page_target_id: Optional[str] = None
+    cdp_ws_url: Optional[str] = None
 
 
 class ListBrowserSessionSchema(BaseModel):

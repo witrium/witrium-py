@@ -32,7 +32,7 @@ api_token = "YOUR_WITRIUM_API_TOKEN"  # Obtain from dashboard
 # 2. Use context manager for automatic browser session management
 with SyncWitriumClient(api_token=api_token) as client:
     # Browser session is automatically created
-    # client.session_id contains the browser session ID
+    # client.session contains the full browser session object
     
     # 3. Run workflows
     login = client.run_workflow(
@@ -68,7 +68,7 @@ from witrium import AsyncWitriumClient
 async with AsyncWitriumClient(api_token="...") as client:
     # Browser session automatically created and waits until running state
     # This may take a few seconds as the browser instance is being provisioned
-    print(f"Session ID: {client.session_id}")
+    print(f"Session ID: {client.session.uuid}")
     
     # All workflows automatically use this session
     result1 = await client.run_workflow("workflow-1")
@@ -296,7 +296,7 @@ from witrium import SyncWitriumClient, WorkflowRunOptionsSchema
 
 with SyncWitriumClient(api_token="your-api-token") as client:
     # Browser session automatically created
-    # client.session_id contains the session UUID
+    # client.session contains the full browser session object
 
     # Step 1: Run login workflow (navigates to login page and authenticates)
     login_response = client.run_workflow_and_wait(
@@ -433,7 +433,7 @@ logger = logging.getLogger(__name__)
 
 with SyncWitriumClient(api_token="your-api-token") as client:
     # Browser session automatically created
-    logger.info(f"Browser session created: {client.session_id}")
+    logger.info(f"Browser session created: {client.session.uuid}")
     
     # Step 1: Secure login with 2FA
     logger.info("Initiating secure banking login...")
@@ -509,7 +509,7 @@ with SyncWitriumClient(api_token="your-api-token") as client:
         talent_id="talent-uuid",
         options=TalentRunOptionsSchema(
             args={"key": "value"}
-            # browser_session_id is automatically set to client.session_id
+            # browser_session_id is automatically set to client.session.uuid
         )
     )
 
@@ -532,7 +532,7 @@ from witrium import AsyncWitriumClient, WorkflowRunOptionsSchema, TalentRunOptio
 async def main():
     async with AsyncWitriumClient(api_token="your-api-token") as client:
         # Browser session automatically created
-        print(f"Session ID: {client.session_id}")
+        print(f"Session ID: {client.session.uuid}")
 
         # Step 1: Run a workflow to set up the browser state (e.g., login, navigate)
         print("Running setup workflow...")
@@ -567,7 +567,7 @@ async def main():
         print(f"Follow-up completed: {followup_result.status}")
 
         # Check session details at any point
-        session = await client.get_browser_session(client.session_id)
+        session = await client.get_browser_session(client.session.uuid)
         print(f"Session status: {session.status}, Busy: {session.is_busy}")
 
     # Browser session automatically closed on exit
@@ -798,7 +798,7 @@ SyncWitriumClient(
 **Session Options:**
 - When using context manager (`with client:`), a browser session is automatically created
 - `session_options` configures the auto-created session (proxy, provider, use_states)
-- `client.session_id` contains the active session UUID
+- `client.session` holds the full `BrowserSessionSchema` object; use `client.session.uuid` to access the session UUID
 
 #### Core Methods
 
@@ -826,7 +826,7 @@ run_workflow(
 
 **Session Management:**
 
-- `browser_session_id`: UUID of the browser session to use. When using context manager, this is automatically set to `client.session_id`.
+- `browser_session_id`: UUID of the browser session to use. When using context manager, this is automatically set to `client.session.uuid`.
 - `preserve_state`: Save the browser state with this name after workflow completion. Other workflows can restore this state using `use_states`.
 - `use_states`: List of previously saved state names to restore. **Note:** This is ignored if `browser_session_id` is provided - the session's use_states takes precedence.
 

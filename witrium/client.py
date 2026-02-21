@@ -82,7 +82,7 @@ class SyncWitriumClient(WitriumClient):
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
         self._session_options = session_options or BrowserSessionCreateOptions()
-        self.session_id: Optional[str] = None
+        self.session: Optional[BrowserSessionSchema] = None
 
     def close(self):
         """Close the underlying HTTP client."""
@@ -90,22 +90,21 @@ class SyncWitriumClient(WitriumClient):
             self._client.close()
 
     def __enter__(self):
-        session = self.create_browser_session(self._session_options)
-        self.session_id = session.uuid
+        self.session = self.create_browser_session(self._session_options)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.session_id:
+        if self.session:
             try:
                 self.close_browser_session(
-                    session_id=self.session_id,
+                    session_id=self.session.uuid,
                     options=BrowserSessionCloseOptions(
                         force=True, preserve_state=self._session_options.preserve_state
                     ),
                 )
             except Exception:
                 pass  # Best effort cleanup
-            self.session_id = None
+            self.session = None
         self.close()
 
     def run_workflow(
@@ -146,7 +145,7 @@ class SyncWitriumClient(WitriumClient):
         if options.record_session:
             payload["record_session"] = options.record_session
         # Use client's session_id if available and no explicit session provided
-        browser_session_id = options.browser_session_id or self.session_id
+        browser_session_id = options.browser_session_id or self.session.uuid
         if browser_session_id is not None:
             payload["browser_session_id"] = browser_session_id
 
@@ -460,7 +459,7 @@ class SyncWitriumClient(WitriumClient):
         if options.preserve_state is not None:
             payload["preserve_state"] = options.preserve_state
         # Use client's session_id if available and no explicit session provided
-        browser_session_id = options.browser_session_id or self.session_id
+        browser_session_id = options.browser_session_id or self.session.uuid
         if browser_session_id is not None:
             payload["browser_session_id"] = browser_session_id
 
@@ -648,7 +647,7 @@ class AsyncWitriumClient(WitriumClient):
             timeout=self.timeout, verify=self.verify_ssl, headers=self._headers
         )
         self._session_options = session_options or BrowserSessionCreateOptions()
-        self.session_id: Optional[str] = None
+        self.session: Optional[BrowserSessionSchema] = None
 
     async def close(self):
         """Close the underlying HTTP client."""
@@ -656,22 +655,21 @@ class AsyncWitriumClient(WitriumClient):
             await self._client.aclose()
 
     async def __aenter__(self):
-        session = await self.create_browser_session(self._session_options)
-        self.session_id = session.uuid
+        self.session = await self.create_browser_session(self._session_options)
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        if self.session_id:
+        if self.session:
             try:
                 await self.close_browser_session(
-                    session_id=self.session_id,
+                    session_id=self.session.uuid,
                     options=BrowserSessionCloseOptions(
                         force=True, preserve_state=self._session_options.preserve_state
                     ),
                 )
             except Exception:
                 pass  # Best effort cleanup
-            self.session_id = None
+            self.session = None
         await self.close()
 
     async def run_workflow(
@@ -712,7 +710,7 @@ class AsyncWitriumClient(WitriumClient):
         if options.record_session:
             payload["record_session"] = options.record_session
         # Use client's session_id if available and no explicit session provided
-        browser_session_id = options.browser_session_id or self.session_id
+        browser_session_id = options.browser_session_id or self.session.uuid
         if browser_session_id is not None:
             payload["browser_session_id"] = browser_session_id
 
@@ -1026,7 +1024,7 @@ class AsyncWitriumClient(WitriumClient):
         if options.preserve_state is not None:
             payload["preserve_state"] = options.preserve_state
         # Use client's session_id if available and no explicit session provided
-        browser_session_id = options.browser_session_id or self.session_id
+        browser_session_id = options.browser_session_id or self.session.uuid
         if browser_session_id is not None:
             payload["browser_session_id"] = browser_session_id
 

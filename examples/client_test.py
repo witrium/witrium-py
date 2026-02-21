@@ -25,7 +25,7 @@ async def main():
         api_token=API_TOKEN,
         # session_options=BrowserSessionCreateOptions(preserve_state="my-saved-state"),
     ) as client:
-        print(f"Session ID: {client.session_id}\n")
+        print(f"Session ID: {client.session.uuid}\n")
 
         # Run workflow - session_id is automatically used
         print(f"Running workflow: {WORKFLOW_ID}")
@@ -46,11 +46,11 @@ async def main():
         print(f"  ✓ Status: {result2}\n")
 
         # Check session details
-        session = await client.get_browser_session(client.session_id)
+        session = await client.get_browser_session(client.session.uuid)
         print("Session Details:")
         print(f"  Status: {session.status}")
-        print(f"  Busy: {session.is_busy}")
-        print(f"  Provider: {session.provider}\n")
+        print(f"  Page Target ID: {session.page_target_id}")
+        print(f"  CDP URL: {session.cdp_ws_url}\n")
 
     print("✓ Session automatically closed on exit\n")
 
