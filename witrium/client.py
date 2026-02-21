@@ -91,7 +91,7 @@ class SyncWitriumClient(WitriumClient):
 
     def __enter__(self):
         self.session = self.create_browser_session(self._session_options)
-        return self.session
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         if self.session:
@@ -656,7 +656,7 @@ class AsyncWitriumClient(WitriumClient):
 
     async def __aenter__(self):
         self.session = await self.create_browser_session(self._session_options)
-        return self.session
+        return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         if self.session:
