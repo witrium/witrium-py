@@ -83,6 +83,8 @@ class SyncWitriumClient(WitriumClient):
         )
         self._session_options = session_options or BrowserSessionCreateOptions()
         self.session_id: Optional[str] = None
+        self.page_target_id: Optional[str] = None
+        self.cdp_ws_url: Optional[str] = None
 
     def close(self):
         """Close the underlying HTTP client."""
@@ -92,6 +94,8 @@ class SyncWitriumClient(WitriumClient):
     def __enter__(self):
         session = self.create_browser_session(self._session_options)
         self.session_id = session.uuid
+        self.page_target_id = session.page_target_id
+        self.cdp_ws_url = session.cdp_ws_url
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
